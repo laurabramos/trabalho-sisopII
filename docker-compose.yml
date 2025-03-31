@@ -1,0 +1,45 @@
+version: '3.8'
+
+networks:
+  my_network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 192.168.1.0/24
+
+services:
+  server:
+    image: my_server_client
+    container_name: server
+    command: ["server"]
+    hostname: server
+    networks:
+      my_network:
+        ipv4_address: 192.168.1.100
+
+  client1:
+    image: my_server_client
+    container_name: client1
+    command: ["client"]
+    hostname: client1
+    networks:
+      my_network:
+        ipv4_address: 192.168.1.101
+
+  client2:
+    image: my_server_client
+    container_name: client2
+    command: ["client"]
+    hostname: client2
+    networks:
+      my_network:
+        ipv4_address: 192.168.1.102
+
+  client3:
+    image: my_server_client
+    container_name: client3
+    command: ["client"]
+    hostname: client3
+    networks:
+      my_network:
+        ipv4_address: 192.168.1.103
