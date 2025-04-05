@@ -1,7 +1,7 @@
-# trabalho-sisopII
+# Trabalho Sisop II
  Trabalho da disciplina de sistemas operacionais II, UFRGS, 25/1
 
-## Comandos
+## Comandos para instalar o docker
 
 Instalar o docker
 
@@ -16,7 +16,9 @@ newgrp docker
 docker run hello-world reboot
 
 
-Rodar o docker
+
+
+## Rodar o docker
 
 docker build -t server_client .
 
