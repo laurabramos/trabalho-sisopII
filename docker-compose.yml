@@ -34,12 +34,12 @@ services:
     networks:
       my_network:
         ipv4_address: 192.168.1.102
-
-  client3:
-    image: server_client
-    container_name: client3
-    command: ["client"]
-    hostname: client3
-    networks:
-      my_network:
-        ipv4_address: 192.168.1.103
+        
+#  client3:
+#    image: server_client
+#    container_name: client3
+#    command: ["client"]
+#    hostname: client3
+#    networks:
+#      my_network:
+#        ipv4_address: 192.168.1.103

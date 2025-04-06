@@ -3,6 +3,7 @@
 
 #include "nodo.h"
 #include <netinet/in.h>
+#include <cstdint>
 
 class Client : public Nodo {
 public:
@@ -10,9 +11,11 @@ public:
     ~Client();
     
     void discoverServer();
-    
+    void sendNum(const std::string& serverIP);
+
 private:
-    int clientSocket;
+    int clientSocketBroad;
+    int clientSocketUni;
     struct sockaddr_in broadcastAddr;
 };
 

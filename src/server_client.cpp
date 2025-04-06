@@ -1,5 +1,7 @@
 #include "server.h"
 #include "client.h"
+#include <cstdint>
+
 
 int main(int argc, char* argv[]) {
     if (argc != 2) {
