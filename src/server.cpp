@@ -5,7 +5,11 @@
 #include <unistd.h>
 #include <arpa/inet.h>
 #include <cstdint>
+#include <mutex>
+#include <chrono>
 
+std::mutex participantsMutex;
+std::mutex sumMutex;
 
 Server::Server() {
     serverSocket = socket(AF_INET, SOCK_DGRAM, 0);
@@ -35,7 +39,7 @@ void Server::startListening() {
     std::thread numberThread(&Server::receiveNumbers, this);
     numberThread.detach(); 
 
-    std::cout << "Servidor esperando mensagens de descoberta...\n";
+    //std::cout << "Servidor esperando mensagens de descoberta...\n";
     
     while (true) {
         int received = recvfrom(serverSocket, &message, sizeof(Message), 0, 
@@ -75,7 +79,6 @@ void Server::handleDiscovery(Message& message, struct sockaddr_in &clientAddr) {
 
 void Server::receiveNumbers() {
     int numSocket = socket(AF_INET, SOCK_DGRAM, 0);
-    int total = 0;
 
     if (numSocket == -1) {
         perror("Erro ao criar socket para números");
@@ -86,7 +89,7 @@ void Server::receiveNumbers() {
     memset(&numAddr, 0, sizeof(numAddr));
     numAddr.sin_family = AF_INET;
     numAddr.sin_addr.s_addr = INADDR_ANY;
-    numAddr.sin_port = htons(RESQUEST_PORT); // Porta específica para números
+    numAddr.sin_port = htons(RESQUEST_PORT);
 
     if (bind(numSocket, (struct sockaddr*)&numAddr, sizeof(numAddr)) < 0) {
         perror("Erro ao bindar socket de números");
@@ -94,78 +97,101 @@ void Server::receiveNumbers() {
         return;
     }
 
-    std::cout << "Servidor pronto para receber números na porta 5001...\n";
+    // Criar múltiplas threads para processar os números
+    const int NUM_THREADS = 3;
+    std::vector<std::thread> workers;
 
-    while (true) {
-        Message number;
-        //ESSE TRECHO DE CODIGO INSTANCIA UMA STRUCT QUE VAI RECEBER O ENDEREÇO QUE EU QUERO RECEBER O NUMERO
-        //ELA ESTA NOMEADA COMO CLIENTEADDR PORQUE IREI RECEBER O ENDERECO DO CLIENTE
-        struct sockaddr_in clientAddr;
-        socklen_t clientLen = sizeof(clientAddr);
-        
-        //O RECVFROM RETORNA A QUANTIDADE DE BYTES QUE EU RECEBI
-        int received = recvfrom(numSocket, &number, sizeof(Message), 0, 
-                               (struct sockaddr*)&clientAddr, &clientLen);
-        if (received > 0) {
-            std::string clientIP = inet_ntoa(clientAddr.sin_addr);
+    for (int i = 0; i < NUM_THREADS; ++i) {
+        workers.emplace_back([this, numSocket]() {
+            while (true) {
+                //std::cout << "Entrando na thread" << std::endl;
+                Message number;
+                struct sockaddr_in clientAddr;
+                socklen_t clientLen = sizeof(clientAddr);
 
-            updateParticipant(clientIP, number.num);
-            updateSumTable(number.seq, number.num);
-            printParticipants();
-            total = number.num + total;
-          
-            Message confirmation = {Type::REQ_ACK, 0, number.seq};
-           
-            // Enviar resposta ao cliente
-            sendto(numSocket, &confirmation, sizeof(Message), 0, 
-                   (struct sockaddr*)&clientAddr, clientLen);
+                int received = recvfrom(numSocket, &number, sizeof(Message), 0, 
+                                       (struct sockaddr*)&clientAddr, &clientLen);
+                if (received > 0) {
+                    std::string clientIP = inet_ntoa(clientAddr.sin_addr);
 
+                //std::cout << "Entrando no IF" << std::endl;
 
-        }
+                    {
+                        //std::cout << "AAAAAA" << std::endl;
+                        std::lock_guard<std::mutex> lock(participantsMutex);
+                        updateParticipant(clientIP, number.num);
+                       //std::cout << "BBBBBB" << std::endl;
+                    }
+
+                    {
+                        std::lock_guard<std::mutex> lock(sumMutex);
+                        updateSumTable(number.seq, number.num);
+                    }
+
+                    printParticipants();
+
+                    Message confirmation = {Type::REQ_ACK, 0, number.seq};
+
+                    sendto(numSocket, &confirmation, sizeof(Message), 0, 
+                           (struct sockaddr*)&clientAddr, clientLen);
+
+                           //std::cout << "Sera que to mandando algo?" << std::endl;
+                }
+
+               // std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            }
+        });
+    }
+
+    for (auto& worker : workers) {
+        worker.join();
     }
 
     close(numSocket);
 }
 
+
 void Server::printParticipants() {
-    std::cout << "Lista de participantes:\n";
+    //std::cout << "Lista de participantes:\n";
     for (const auto& p : participants) {
-        std::cout << "IP: " << p.address 
-                  << ", Seq: " << p.last_req
-                  << ", Num: " << p.last_sum << std::endl;
+       // std::cout << "IP: " << p.address 
+       //           << ", Seq: " << p.last_req
+       //           << ", Num: " << p.last_sum << std::endl;
     }
 }
 
 bool Server::checkList(const std::string& ip) {
     for (const auto& participant : participants) {
         if (participant.address == ip) {
-            std::cout << "Esta na list \n";
+            //std::cout << "Esta na list \n";
             return true; // IP encontrado na lista
         }
     }
     return false; // IP não está na lista
 }
 
-void Server::updateParticipant(const std::string& clientIP, uint32_t num){
+void Server::updateParticipant(const std::string& clientIP, uint32_t num) {
+    //std::cout << "BBBBBB" << std::endl;
 
     for (auto& p : participants) {
-        if (p.address == clientIP) {  // Verifica se o IP já está na lista
-            p.last_sum += num;        // Atualiza o valor somando ao existente
-            p.last_req++;            // Atualiza a sequência
-            return;              // Sai da função, pois já atualizou
+        if (p.address == clientIP) {
+            p.last_sum += num;
+            p.last_req++;
+            return;
         }
     }
-
-
-
     // Se não encontrou o IP, adiciona um novo participante
     participants.push_back({clientIP, num, 0});
 }
 
-void Server::updateSumTable(uint32_t seq, uint64_t num){
 
-    sumTotal.num_reqs ++;
+void Server::updateSumTable(uint32_t seq, uint64_t num) {
+
+    //std::cout << "CCCCCC" << std::endl;
+
+    sumTotal.num_reqs++;
     sumTotal.sum += num;
-    std::cout << "Total de requisições: " << sumTotal.num_reqs << std::endl; 
-    std::cout << "Soma total: " << sumTotal.sum << std::endl;
+    if(sumTotal.num_reqs % 500000 == 0) {
+        std::cout << "Total de requisições: " << sumTotal.num_reqs << std::endl;
+        std::cout << "Soma total: " << sumTotal.sum << std::endl;}
 }

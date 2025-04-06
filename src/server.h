@@ -6,6 +6,8 @@
 #include <netinet/in.h>
 #include <cstdint>
 #include <thread>
+#include <mutex>
+
 
 class Server : public Nodo {
     public:

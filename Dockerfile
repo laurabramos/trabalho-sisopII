@@ -14,5 +14,5 @@ RUN apt-get update && apt-get install -y make
 # Compilando o código dentro do container
 RUN make
 
-# Definindo a execução com argumentos dinâmicos
-ENTRYPOINT ["./server_client"]
+# Listando os arquivos copiados e compilados
+RUN ls -R /app

@@ -7,7 +7,7 @@
 #include <sys/select.h>  // Para select()
 #include <arpa/inet.h>
 #include <cstdint>
-
+#include <fstream>
 
 #define MAX_ATTEMPTS 5
 #define TIMEOUT 2
@@ -78,7 +78,6 @@ void Client::discoverServer() {
             if (recMessage.type == Type::DESC_ACK) {
                 std::string serverIP = inet_ntoa(broadcastAddr.sin_addr); //retorna o ip do servidor
                 std::cout << "Servidor encontrado! IP da resposta: " << serverIP << std::endl;
-                //break;
                 sendNum(serverIP);
                 break;
             }
@@ -97,7 +96,6 @@ void Client::discoverServer() {
 }
 
 void Client::sendNum (const std::string& serverIP){
-    
     //ESSE TRECHO DE CODIGO APENAS CRIA O SOCKET
     int clientSocketUni = socket(AF_INET, SOCK_DGRAM, 0);
 
@@ -120,24 +118,46 @@ void Client::sendNum (const std::string& serverIP){
         return;
     }
 
-    Message message = {Type::REQ, 21, 1};
-
-    if (sendto(clientSocketUni, &message, sizeof(Message), 0, 
-               (struct sockaddr*)&serverAddr, sizeof(serverAddr)) == -1) {
-        perror("Erro ao enviar número");
+    /*std::ifstream file(filename);
+    if (!file) {
+        std::cerr << "Erro ao abrir o arquivo: " << filename << std::endl;
         close(clientSocketUni);
         return;
-    }
+    }*/
 
-    Message seq;
-    socklen_t serverLen = sizeof(serverAddr);
-    int received = recvfrom(clientSocketUni, &seq, sizeof(Message), 0, 
-                            (struct sockaddr*)&serverAddr, &serverLen);
-    
-    if (received > 0) {
-        std::cout << "Confirmação do servidor: " << seq.seq << std::endl;
-    } else {
-        std::cout << "Nenhuma confirmação recebida do servidor.\n";
+    uint32_t num;
+    uint32_t seq = 1;
+
+    while (std::cin >> num) {  // Lê números da entrada padrão (teclado)
+        bool confirmed = false;
+
+        //std::cout << "Primeiro while" << std::endl;
+
+
+        while (!confirmed) {
+            Message message = {Type::REQ, num, seq};
+
+            if (sendto(clientSocketUni, &message, sizeof(Message), 0,
+                       (struct sockaddr*)&serverAddr, sizeof(serverAddr)) == -1) {
+                perror("Erro ao enviar número");
+                close(clientSocketUni);
+                return;
+            }
+
+            Message response;
+            socklen_t serverLen = sizeof(serverAddr);
+
+            int received = recvfrom(clientSocketUni, &response, sizeof(Message), 0,
+                                    (struct sockaddr*)&serverAddr, &serverLen);
+
+            if (received > 0 && response.seq == seq) {
+                //std::cout << "Confirmação recebida do servidor para requisição " << seq << std::endl;
+                seq++;  // Incrementa a sequência para a próxima requisição
+                confirmed = true;
+            } else {
+                std::cout << "Erro na confirmação do servidor. Reenviando requisição " << seq << "...\n";
+            }
+        }
     }
 
     close(clientSocketUni);
