@@ -8,40 +8,49 @@
 #include <mutex>
 #include <chrono>
 
+// Mutex para sincronização da lista de participantes e soma total
 std::mutex participantsMutex;
 std::mutex sumMutex;
 
+// Construtor do servidor
 Server::Server() {
+    // Criação do socket UDP
     serverSocket = socket(AF_INET, SOCK_DGRAM, 0);
     if (serverSocket == -1) {
         perror("Erro ao criar socket UDP");
         exit(1);
     }
 
+    // Configuração do endereço do servidor(IPV4, UDP, porta)
     serverAddr.sin_family = AF_INET;
     serverAddr.sin_addr.s_addr = INADDR_ANY;
     serverAddr.sin_port = htons(DISCOVERY_PORT);
 
+    // Associa o socket a um endereço e porta específicos
     if (bind(serverSocket, (struct sockaddr*)&serverAddr, sizeof(serverAddr)) < 0) {
         perror("Erro ao bindar socket UDP");
         exit(1);
     }
 }
 
+// Destrutor do servidor, fecha o socket ao encerrar
 Server::~Server() {
     close(serverSocket);
 }
 
+// Inicia a escuta de mensagens de descoberta e números
 void Server::startListening() {
     Message message;
     socklen_t clientLen = sizeof(clientAddr);
 
+    // Inicia uma thread para receber números
     std::thread numberThread(&Server::receiveNumbers, this);
     numberThread.detach(); 
 
     //std::cout << "Servidor esperando mensagens de descoberta...\n";
     
     while (true) {
+        // Aguarda recebimento de mensagens de descoberta
         int received = recvfrom(serverSocket, &message, sizeof(Message), 0, 
                                (struct sockaddr*)&clientAddr, &clientLen);
         
@@ -51,7 +60,7 @@ void Server::startListening() {
     }
 }
 
-
+// Processa mensagens de descoberta
 void Server::handleDiscovery(Message& message, struct sockaddr_in &clientAddr) {
     if (message.type == Type::DESC) {  // Comparação com ENUM
         std::string serverIP = getIP();
@@ -60,13 +69,13 @@ void Server::handleDiscovery(Message& message, struct sockaddr_in &clientAddr) {
         Message response;
         response.type = Type::DESC_ACK;
 
-        
+        // Envia a resposta ao cliente
         sendto(serverSocket, &response, sizeof(Message), 0, 
                (struct sockaddr*)&clientAddr, sizeof(clientAddr));
 
-        std::string clientIP = inet_ntoa(clientAddr.sin_addr);
+        std::string clientIP = inet_ntoa(clientAddr.sin_addr);// Obtém o IP do cliente
 
-        bool test = checkList(clientIP);
+        bool test = checkList(clientIP); // Verifica se já está na lista
 
         if(test == false){
             participants.push_back({clientIP, 0, 0}); // Adiciona o cliente à lista de participantes
@@ -77,7 +86,9 @@ void Server::handleDiscovery(Message& message, struct sockaddr_in &clientAddr) {
     }
 }
 
+// Método para receber números enviados pelos clientes
 void Server::receiveNumbers() {
+    // Criação de um novo socket para receber números
     int numSocket = socket(AF_INET, SOCK_DGRAM, 0);
 
     if (numSocket == -1) {
@@ -85,6 +96,7 @@ void Server::receiveNumbers() {
         return;
     }
 
+    // Configuração do socket para recebimento de números
     struct sockaddr_in numAddr;
     memset(&numAddr, 0, sizeof(numAddr));
     numAddr.sin_family = AF_INET;
@@ -105,10 +117,11 @@ void Server::receiveNumbers() {
         workers.emplace_back([this, numSocket]() {
             while (true) {
                 //std::cout << "Entrando na thread" << std::endl;
-                Message number;
+                Message number;//estrutura para troca de pacotes
                 struct sockaddr_in clientAddr;
                 socklen_t clientLen = sizeof(clientAddr);
 
+                // Aguarda recebimento de número
                 int received = recvfrom(numSocket, &number, sizeof(Message), 0, 
                                        (struct sockaddr*)&clientAddr, &clientLen);
                 if (received > 0) {
@@ -117,19 +130,22 @@ void Server::receiveNumbers() {
                 //std::cout << "Entrando no IF" << std::endl;
 
                     {
-                        //std::cout << "AAAAAA" << std::endl;
+                        
+                        // Atualiza informações do participante
                         std::lock_guard<std::mutex> lock(participantsMutex);
                         updateParticipant(clientIP, number.num);
-                       //std::cout << "BBBBBB" << std::endl;
+                    
                     }
 
                     {
+                        // Atualiza a tabela de soma total
                         std::lock_guard<std::mutex> lock(sumMutex);
                         updateSumTable(number.seq, number.num);
                     }
 
-                    printParticipants();
+                    // printParticipants(); // Imprime a lista de participantes
 
+                    // Envia confirmação para o cliente
                     Message confirmation = {Type::REQ_ACK, 0, number.seq};
 
                     sendto(numSocket, &confirmation, sizeof(Message), 0, 
@@ -150,16 +166,17 @@ void Server::receiveNumbers() {
     close(numSocket);
 }
 
-
+// Imprime a lista de participantes e seus últimos valores recebidos
 void Server::printParticipants() {
-    //std::cout << "Lista de participantes:\n";
+    std::cout << "Lista de participantes:\n";
     for (const auto& p : participants) {
-       // std::cout << "IP: " << p.address 
-       //           << ", Seq: " << p.last_req
-       //           << ", Num: " << p.last_sum << std::endl;
+        std::cout << "IP: " << p.address 
+                  << ", Seq: " << p.last_req
+                  << ", Num: " << p.last_sum << std::endl;
     }
 }
 
+// Verifica se um IP já está na lista de participantes
 bool Server::checkList(const std::string& ip) {
     for (const auto& participant : participants) {
         if (participant.address == ip) {
@@ -170,8 +187,8 @@ bool Server::checkList(const std::string& ip) {
     return false; // IP não está na lista
 }
 
+// Atualiza os dados de um participante
 void Server::updateParticipant(const std::string& clientIP, uint32_t num) {
-    //std::cout << "BBBBBB" << std::endl;
 
     for (auto& p : participants) {
         if (p.address == clientIP) {
@@ -184,10 +201,9 @@ void Server::updateParticipant(const std::string& clientIP, uint32_t num) {
     participants.push_back({clientIP, num, 0});
 }
 
+// Atualiza a soma total das requisições
 
 void Server::updateSumTable(uint32_t seq, uint64_t num) {
-
-    //std::cout << "CCCCCC" << std::endl;
 
     sumTotal.num_reqs++;
     sumTotal.sum += num;

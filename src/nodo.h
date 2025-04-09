@@ -17,19 +17,19 @@ enum class Type { //tipo de mensagens trocadas servidor-cliente
 };
 
 // Estrutura contendo o enum e um identificador opcional
-struct Message {
+struct Message {//estrutura dos pacotes
     Type type; //tipo da mensagem que será enviado
     uint32_t num;
     uint32_t seq;
 };
 
-struct tableClient {
+struct tableClient {//estrutura da tabela de clientes
     std::string address;
     uint32_t last_req;
     uint32_t last_sum;
 };
 
-struct tableAgregation {
+struct tableAgregation {//estrutura da tabela de soma
     uint32_t num_reqs;
     uint64_t sum;
 };

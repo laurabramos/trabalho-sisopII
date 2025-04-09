@@ -5,23 +5,27 @@
 #include <unistd.h>
 #include <fcntl.h>    // Para fcntl() e O_NONBLOCK
 #include <sys/select.h>  // Para select()
-#include <arpa/inet.h>
+#include <arpa/inet.h> // Para manipulação de endereços IP
 #include <cstdint>
 #include <fstream>
 
 #define MAX_ATTEMPTS 5
 #define TIMEOUT 2
 
+// Construtor da classe Client
 Client::Client() {
+    // Criação do socket UDP para broadcast
     clientSocketBroad = socket(AF_INET, SOCK_DGRAM, 0);
     if (clientSocketBroad == -1) {
         perror("Erro ao criar socket UDP");
         exit(1);
     }
 
+    // Habilita a opção de broadcast no socket
     int broadcastEnable = 1;
     setsockopt(clientSocketBroad, SOL_SOCKET, SO_BROADCAST, &broadcastEnable, sizeof(broadcastEnable));
 
+     // Configuração do endereço de broadcast para envio de mensagens de descoberta (IPV4, UDP, Porta)
     broadcastAddr.sin_family = AF_INET;
     broadcastAddr.sin_addr.s_addr = INADDR_BROADCAST;
     broadcastAddr.sin_port = htons(DISCOVERY_PORT);
@@ -36,13 +40,14 @@ Client::Client() {
     fcntl(clientSocketBroad, F_SETFL, flags | O_NONBLOCK);  // Configura para não bloqueante
 }
 
+// Destrutor da classe Client - Fecha o socket UDP quando o objeto é destruído
 Client::~Client() {
     close(clientSocketBroad);
 }
 
-
+//descobrir servidor por broadcast
 void Client::discoverServer() {
-    Message message = {Type :: DESC};
+    Message message = {Type :: DESC}; //estrutura da troca de mensagens, tipo DESC
     int attempts = 0;
     
     while (attempts < MAX_ATTEMPTS) {
@@ -53,7 +58,7 @@ void Client::discoverServer() {
         std::cout << "Mandando mensagem de descoberta...\n";
 
         // char buffer[BUFFER_SIZE];
-        Message recMessage;;
+        Message recMessage;; //armazena a resposta do servidor
         socklen_t serverLen = sizeof(broadcastAddr);
         int received = -1;
         
@@ -75,10 +80,10 @@ void Client::discoverServer() {
         }
 
         if (received > 0) {
-            if (recMessage.type == Type::DESC_ACK) {
+            if (recMessage.type == Type::DESC_ACK) {// verifica se recebeu a resposta e se é do tipo correto DESC_ACK
                 std::string serverIP = inet_ntoa(broadcastAddr.sin_addr); //retorna o ip do servidor
                 std::cout << "Servidor encontrado! IP da resposta: " << serverIP << std::endl;
-                sendNum(serverIP);
+                sendNum(serverIP); // entra na funcao de envio dos numeros
                 break;
             }
         } else if (received == -1) {
@@ -105,7 +110,6 @@ void Client::sendNum (const std::string& serverIP){
     }
 
     //ESSE TRECHO DE CODIGO DEFINE PARA QUEM EU VOU MANDA O NUMERO, SE EU NAO SEI PARA QUEM EU VOU MANDAR O NUMERO E NAO CONSIGO ENVIAR
-    //Se esquecer disso eu apanho do Arthur
 
     struct sockaddr_in serverAddr;
     memset(&serverAddr, 0, sizeof(serverAddr));
@@ -126,7 +130,7 @@ void Client::sendNum (const std::string& serverIP){
     }*/
 
     uint32_t num;
-    uint32_t seq = 1;
+    uint32_t seq = 1; //inicializa as variaveis
 
     while (std::cin >> num) {  // Lê números da entrada padrão (teclado)
         bool confirmed = false;
@@ -135,7 +139,7 @@ void Client::sendNum (const std::string& serverIP){
 
 
         while (!confirmed) {
-            Message message = {Type::REQ, num, seq};
+            Message message = {Type::REQ, num, seq};//cria a mensagem do tipo Requisição, que envia os números
 
             if (sendto(clientSocketUni, &message, sizeof(Message), 0,
                        (struct sockaddr*)&serverAddr, sizeof(serverAddr)) == -1) {
@@ -144,13 +148,13 @@ void Client::sendNum (const std::string& serverIP){
                 return;
             }
 
-            Message response;
+            Message response; // estrutura para a mensagem de resposta do servidor
             socklen_t serverLen = sizeof(serverAddr);
 
             int received = recvfrom(clientSocketUni, &response, sizeof(Message), 0,
                                     (struct sockaddr*)&serverAddr, &serverLen);
 
-            if (received > 0 && response.seq == seq) {
+            if (received > 0 && response.seq == seq) {// se for recebido uma mensagem o numero de sequencia da mensagem recebi for igual a da envia 
                 //std::cout << "Confirmação recebida do servidor para requisição " << seq << std::endl;
                 seq++;  // Incrementa a sequência para a próxima requisição
                 confirmed = true;

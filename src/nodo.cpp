@@ -25,7 +25,7 @@ std::string Nodo::getIP() {
     std::string hostname = getHostname();
 
     struct addrinfo hints{}, *info, *p;
-    hints.ai_family = AF_INET; // Apenas IPv4
+    hints.ai_family = AF_INET; 
     hints.ai_socktype = SOCK_STREAM;
 
     if (getaddrinfo(hostname.c_str(), nullptr, &hints, &info) != 0) {
@@ -42,4 +42,4 @@ std::string Nodo::getIP() {
 
     freeaddrinfo(info);
     return ipAddress;
-}//@todo
+}
