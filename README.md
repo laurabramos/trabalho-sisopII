@@ -15,9 +15,6 @@ newgrp docker
 
 docker run hello-world reboot
 
-
-
-
 ## Rodar o docker
 
 docker build -t server_client .
@@ -26,3 +23,6 @@ docker-compose up
 
 docker-compose down
 
+## Rodar bash 
+
+./run_containers.sh
