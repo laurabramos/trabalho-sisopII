@@ -115,7 +115,7 @@ void Server::receiveNumbers() {
                     std::string clientIP = inet_ntoa(clientAddr.sin_addr);
 
                 //std::cout << "Entrando no IF" << std::endl;
-
+                    
                     {
                         
                         // Atualiza informações do participante
@@ -130,7 +130,7 @@ void Server::receiveNumbers() {
                         updateSumTable(number.seq, number.num);
                     }
 
-                    // printParticipants(); // Imprime a lista de participantes
+                    printParticipants(); // Imprime a lista de participantes
 
                     // Envia confirmação para o cliente
                     Message confirmation = {Type::REQ_ACK, 0, number.seq};
@@ -194,7 +194,7 @@ void Server::updateSumTable(uint32_t seq, uint64_t num) {
 
     sumTotal.num_reqs++;
     sumTotal.sum += num;
-    if(sumTotal.num_reqs % 500000 == 0) {
+    if(sumTotal.num_reqs % 100000 == 0) {
         std::cout << "Total de requisições: " << sumTotal.num_reqs << std::endl;
         std::cout << "Soma total: " << sumTotal.sum << std::endl;}
 }
