@@ -20,7 +20,6 @@ Client::Client() {
     // Criação do socket UDP para broadcast
     clientSocketBroad = createSocket(DISCOVERY_PORT);
     setSocketBroadcastOptions(clientSocketBroad);
-    setSocketTimeout(clientSocketBroad, 3);
 }
 
 // Destrutor
@@ -80,7 +79,7 @@ void Client::discoverServer() {
         }
 
         if (received > 0 && recMessage.type == Type::DESC_ACK) {
-            std::string serverIP = inet_ntoa(fromAddr.sin_addr);
+            char *serverIP = inet_ntoa(fromAddr.sin_addr);
             std::cout << "Servidor encontrado! IP da resposta: " << serverIP << std::endl;
             sendNum(serverIP);
             break;
@@ -96,19 +95,21 @@ void Client::discoverServer() {
 }
 
 // Envia números via unicast
-void Client::sendNum(const std::string& serverIP) {
-    int clientSocketUni = socket(AF_INET, SOCK_DGRAM, 0);
+void Client::sendNum(const char *serverIP) {
+    int clientSocketUni = createSocket(RESQUEST_PORT);
     if (clientSocketUni == -1) {
         perror("Erro ao criar socket unicast");
         return;
     }
+    setSocketTimeout(clientSocketUni,3);
 
     sockaddr_in serverAddr{};
+    memset(&serverAddr, 0, sizeof(serverAddr));
     serverAddr.sin_family = AF_INET;
     serverAddr.sin_port = htons(RESQUEST_PORT);
-
-    if (inet_pton(AF_INET, serverIP.c_str(), &serverAddr.sin_addr) <= 0) {
-        perror("Erro ao converter endereço IP");
+    if (inet_pton(AF_INET, serverIP, &serverAddr.sin_addr) <= 0)
+    {
+        std::cerr << "ERROR invalid address/ Address not supported." << std::endl;
         close(clientSocketUni);
         return;
     }
@@ -116,30 +117,34 @@ void Client::sendNum(const std::string& serverIP) {
     uint32_t num;
     uint32_t seq = 1;
 
-    while (std::cin >> num) {
-        bool confirmed = false;
-
-        while (!confirmed) {
-            Message message = {Type::REQ, num, seq};
-
-            if (sendto(clientSocketUni, &message, sizeof(Message), 0,
-                       (struct sockaddr*)&serverAddr, sizeof(serverAddr)) == -1) {
-                perror("Erro ao enviar número");
-                close(clientSocketUni);
-                return;
-            }
-
-            Message response;
-            socklen_t serverLen = sizeof(serverAddr);
-
-            int received = recvfrom(clientSocketUni, &response, sizeof(Message), 0,
-                                    (struct sockaddr*)&serverAddr, &serverLen);
-
-            if (received > 0 && response.seq == seq) {
-                seq++;
-                confirmed = true;
-            } else {
-                std::cout << "Erro na confirmação do servidor. Reenviando requisição " << seq << "...\n";
+    while (true){
+        if (std::cin >> num) {
+            //std::cout << "tchaaaau. mandando para " << serverIP << std::endl;
+            bool confirmed = false;
+    
+            while (!confirmed) {
+                Message message = {Type::REQ, num, seq};
+    
+                if (sendto(clientSocketUni, &message, sizeof(Message), 0,
+                           (struct sockaddr*)&serverAddr, sizeof(serverAddr)) == -1) {
+                    perror("Erro ao enviar número");
+                    close(clientSocketUni);
+                    return;
+                }
+                //printf("skjdhflasjdfka");
+    
+                Message response;
+                socklen_t serverLen = sizeof(serverAddr);
+    
+                int received = recvfrom(clientSocketUni, &response, sizeof(Message), 0,
+                                        (struct sockaddr*)&serverAddr, &serverLen);
+                //printf("adkfajjjjjjjjjj");
+                if (received > 0 && response.seq == seq) {
+                    seq++;
+                    confirmed = true;
+                } else {
+                    std::cout << "Erro na confirmação do servidor. Reenviando requisição " << seq << "...\n";
+                }
             }
         }
     }

@@ -11,7 +11,7 @@ public:
     ~Client();
     
     void discoverServer();
-    void sendNum(const std::string& serverIP);
+    void sendNum(const char *serverIP);
 
 private:
     int clientSocketBroad;

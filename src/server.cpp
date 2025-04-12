@@ -15,22 +15,9 @@ std::mutex sumMutex;
 // Construtor do servidor
 Server::Server() {
     // Criação do socket UDP
-    serverSocket = socket(AF_INET, SOCK_DGRAM, 0);
-    if (serverSocket == -1) {
-        perror("Erro ao criar socket UDP");
-        exit(1);
-    }
-
-    // Configuração do endereço do servidor(IPV4, UDP, porta)
-    serverAddr.sin_family = AF_INET;
-    serverAddr.sin_addr.s_addr = INADDR_ANY;
-    serverAddr.sin_port = htons(DISCOVERY_PORT);
-
-    // Associa o socket a um endereço e porta específicos
-    if (bind(serverSocket, (struct sockaddr*)&serverAddr, sizeof(serverAddr)) < 0) {
-        perror("Erro ao bindar socket UDP");
-        exit(1);
-    }
+    serverSocket = createSocket(DISCOVERY_PORT);
+    setSocketBroadcastOptions(serverSocket);
+    setSocketTimeout(serverSocket, 3);
 }
 
 // Destrutor do servidor, fecha o socket ao encerrar
@@ -47,7 +34,7 @@ void Server::startListening() {
     std::thread numberThread(&Server::receiveNumbers, this);
     numberThread.detach(); 
 
-    //std::cout << "Servidor esperando mensagens de descoberta...\n";
+    std::cout << "Servidor esperando mensagens de descoberta...\n";
     
     while (true) {
         // Aguarda recebimento de mensagens de descoberta
