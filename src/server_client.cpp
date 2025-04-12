@@ -12,9 +12,11 @@ int main(int argc, char* argv[]) {
     std::string mode = argv[1];
 
     if (mode == "server") {
+        std::cout << "Começando server\n";
         Server server;
         server.startListening();
     } else if (mode == "client") {
+        std::cout << "Começando client\n";
         Client client;
         client.discoverServer();
     } else {

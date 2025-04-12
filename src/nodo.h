@@ -8,8 +8,10 @@
 #define DISCOVERY_PORT 5000
 #define RESQUEST_PORT 5001
 #define BUFFER_SIZE 1024
+#define BROADCAST_ADDR "192.168.100.255"
 
-enum class Type { //tipo de mensagens trocadas servidor-cliente
+//tipo de mensagens trocadas servidor-cliente
+enum class Type : uint8_t {
     DESC,
     REQ,
     DESC_ACK,
@@ -17,11 +19,14 @@ enum class Type { //tipo de mensagens trocadas servidor-cliente
 };
 
 // Estrutura contendo o enum e um identificador opcional
-struct Message {//estrutura dos pacotes
-    Type type; //tipo da mensagem que será enviado
+#pragma pack(push, 1)
+struct Message {
+    Type type;
     uint32_t num;
     uint32_t seq;
 };
+#pragma pack(pop)
+
 
 struct tableClient {//estrutura da tabela de clientes
     std::string address;
@@ -42,6 +47,9 @@ class Nodo {
 
         virtual std::string getHostname();
         virtual std::string getIP();
+        int createSocket(int port);
+        void setSocketBroadcastOptions(int sockfd);
+        void setSocketTimeout(int sockfd, int timeoutSec);
 
     protected:
         std::vector<tableClient> participants; // Lista de clientes (no servidor)
