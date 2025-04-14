@@ -8,7 +8,7 @@
 #define DISCOVERY_PORT 5000
 #define RESQUEST_PORT 5001
 #define BUFFER_SIZE 1024
-#define BROADCAST_ADDR "192.168.100.255"
+#define BROADCAST_ADDR "255.255.255.255"
 
 //tipo de mensagens trocadas servidor-cliente
 enum class Type : uint8_t {

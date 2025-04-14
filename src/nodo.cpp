@@ -55,31 +55,31 @@ int Nodo::createSocket(int port)
         return -1;
     }
 
-    // setSocketTimeout(sockfd, 1); // Timeout de 1 segundo
+     setSocketTimeout(sockfd, 1); // Timeout de 1 segundo
 
-    // if (port != 0)
-    // {
-    //     int reuse = 1;
-    //     if (setsockopt(sockfd, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(reuse)) < 0)
-    //     {
-    //          cerr << "Failed to set SO_REUSEADDR: " << strerror(errno) << endl;
-    //         close(sockfd);
-    //         return -1;
-    //     }
+     if (port != 0)
+     {
+         int reuse = 1;
+         if (setsockopt(sockfd, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(reuse)) < 0)
+         {
+              cerr << "Failed to set SO_REUSEADDR: " << strerror(errno) << endl;
+             close(sockfd);
+             return -1;
+         }
 
-    //     struct sockaddr_in addr;
-    //     addr.sin_family = AF_INET;
-    //     addr.sin_port = htons(port);
-    //     addr.sin_addr.s_addr = INADDR_ANY;
-    //     bzero(&(addr.sin_zero), 8);
+         struct sockaddr_in addr;
+         addr.sin_family = AF_INET;
+         addr.sin_port = htons(port);
+         addr.sin_addr.s_addr = INADDR_ANY;
+         bzero(&(addr.sin_zero), 8);
 
-    //     if (bind(sockfd, (struct sockaddr *)&addr, sizeof(struct sockaddr)) < 0)
-    //     {
-    //         cerr << "ERROR on binding socket. (" << port << "): " << strerror(errno) << endl;
-    //         close(sockfd);
-    //         return -1;
-    //     }
-    // }
+         if (bind(sockfd, (struct sockaddr *)&addr, sizeof(struct sockaddr)) < 0)
+         {
+             cerr << "ERROR on binding socket. (" << port << "): " << strerror(errno) << endl;
+             close(sockfd);
+             return -1;
+         }
+     }
 
     return sockfd;
 }
