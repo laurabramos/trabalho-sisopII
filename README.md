@@ -26,3 +26,5 @@ docker-compose down
 ## Rodar bash 
 
 ./run_containers.sh
+Mudar o IP do cliente dependendo da rede, ver o problema com o server, não está escutando 
+o cliente
