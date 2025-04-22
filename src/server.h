@@ -16,7 +16,7 @@ class Server : public Nodo {
         
         void startListening();
         void receiveNumbers();
-        void printParticipants();
+        void printParticipants(Message number);
         void printInicio();
 
         

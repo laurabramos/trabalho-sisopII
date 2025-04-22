@@ -143,7 +143,7 @@ void Server::receiveNumbers() {
                         updateSumTable(number.seq, number.num);
                     }
 
-                    printParticipants(); // Imprime a lista de participantes
+                    printParticipants(number); // Imprime a lista de participantes
 
                     // Envia confirmação para o cliente
                     Message confirmation = {Type::REQ_ACK, 0, number.seq};
@@ -167,12 +167,21 @@ void Server::receiveNumbers() {
 }
 
 // Imprime a lista de participantes e seus últimos valores recebidos
-void Server::printParticipants() {
-    std::cout << "Lista de participantes:\n";
+void Server::printParticipants(Message number) {
+    time_t now = time(0);
+    struct tm *ltm = localtime(&now);
+
+    char buffer[21];  // espaço suficiente para "YYYY-MM-DD HH:MM:SS\0"
+    strftime(buffer, sizeof(buffer), "%Y-%m-%d %H:%M:%S ", ltm);
+
+
     for (const auto& p : participants) {
-        std::cout << "IP: " << p.address 
-                  << ", Seq: " << p.last_req
-                  << ", Num: " << p.last_sum << std::endl;
+        std::cout << buffer 
+                  << "client " << p.address 
+                  << " id_req " << p.last_req
+                  << " value " << number.num
+                  << " num_reqs " << sumTotal.num_reqs
+                  << " total_sum " << p.last_sum << std::endl;
     }
 }
 

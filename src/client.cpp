@@ -84,8 +84,8 @@ void Client::discoverServer() {
             time_t now = time(0);
             struct tm *ltm = localtime(&now);
 
-            char buffer[20];  // espaço suficiente para "YYYY-MM-DD HH:MM:SS\0"
-            strftime(buffer, sizeof(buffer), "%Y-%m-%d %H:%M:%S", ltm);
+            char buffer[21];  // espaço suficiente para "YYYY-MM-DD HH:MM:SS\0"
+            strftime(buffer, sizeof(buffer), "%Y-%m-%d %H:%M:%S ", ltm);
 
             std::cout << buffer << serverIP << std::endl;
 
