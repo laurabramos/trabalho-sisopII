@@ -9,16 +9,16 @@
 #include <cstdint>
 #include <fstream>
 #include <ifaddrs.h>
-
+#include "server_client.cpp"
 #define MAX_ATTEMPTS 5
 #define TIMEOUT 2
 
 using namespace std;
 
 // Construtor da classe Client
-Client::Client() {
+Client::Client(Config config) {
     // Criação do socket UDP para broadcast
-    clientSocketBroad = createSocket(DISCOVERY_PORT);
+    clientSocketBroad = createSocket(config.Discovery_port);
     setSocketBroadcastOptions(clientSocketBroad);
 }
 
@@ -37,14 +37,14 @@ void printBytes(const void* data, size_t len) {
 
 
 // Descoberta de servidor por broadcast
-void Client::discoverServer() {
+void Client::discoverServer(Config config) {
     Message message = {Type::DESC, 42, 15};
     printBytes(&message, sizeof(message));  // Deve imprimir exatamente 9 bytes se tudo estiver certo
-    std::cout << "sizeof(Message): " << sizeof(Message) << std::endl;  // Deve imprimir 9
+    cout << "sizeof(Message): " << sizeof(Message) << std::endl;  // Deve imprimir 9
     int attempts = 0;   
 
     broadcastAddr.sin_family = AF_INET;
-    broadcastAddr.sin_port = htons(DISCOVERY_PORT);
+    broadcastAddr.sin_port = htons(config.Discovery_port);
     broadcastAddr.sin_addr.s_addr = inet_addr(BROADCAST_ADDR);
     bzero(&(broadcastAddr.sin_zero), 8);
 
@@ -56,7 +56,7 @@ void Client::discoverServer() {
             perror("Erro no sendto (broadcast)");
         }
 
-        std::cout << "Mandando mensagem de descoberta...\n";
+        cout << "Mandando mensagem de descoberta...\n";
 
         Message recMessage;
         sockaddr_in fromAddr{};
@@ -80,23 +80,23 @@ void Client::discoverServer() {
 
         if (received > 0 && recMessage.type == Type::DESC_ACK) {
             char *serverIP = inet_ntoa(fromAddr.sin_addr);
-            std::cout << "Servidor encontrado! IP da resposta: " << serverIP << std::endl;
+            cout << "Servidor encontrado! IP da resposta: " << serverIP << std::endl;
             sendNum(serverIP);
             break;
         } else if (received == -1 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
-            std::cout << "Nenhuma resposta do servidor. Tentando novamente...\n";
+            cout << "Nenhuma resposta do servidor. Tentando novamente...\n";
             attempts++;
         }
     }
 
     if (attempts >= MAX_ATTEMPTS) {
-        std::cout << "Limite de tentativas atingido. Não foi possível encontrar o servidor.\n";
+        cout << "Limite de tentativas atingido. Não foi possível encontrar o servidor.\n";
     }
 }
 
 // Envia números via unicast
-void Client::sendNum(const char *serverIP) {
-    int clientSocketUni = createSocket(RESQUEST_PORT);
+void Client::sendNum(const char *serverIP,Config config) {
+    int clientSocketUni = createSocket(config.Request_Port);
     if (clientSocketUni == -1) {
         perror("Erro ao criar socket unicast");
         return;
@@ -106,10 +106,10 @@ void Client::sendNum(const char *serverIP) {
     sockaddr_in serverAddr{};
     memset(&serverAddr, 0, sizeof(serverAddr));
     serverAddr.sin_family = AF_INET;
-    serverAddr.sin_port = htons(RESQUEST_PORT);
+    serverAddr.sin_port = htons(config.Request_Port);
     if (inet_pton(AF_INET, serverIP, &serverAddr.sin_addr) <= 0)
     {
-        std::cerr << "ERROR invalid address/ Address not supported." << std::endl;
+        cerr << "ERROR invalid address/ Address not supported." << std::endl;
         close(clientSocketUni);
         return;
     }
@@ -118,7 +118,7 @@ void Client::sendNum(const char *serverIP) {
     uint32_t seq = 1;
 
     while (true){
-        if (std::cin >> num) {
+        if (cin >> num) {
             //std::cout << "tchaaaau. mandando para " << serverIP << std::endl;
             bool confirmed = false;
     
@@ -143,7 +143,7 @@ void Client::sendNum(const char *serverIP) {
                     seq++;
                     confirmed = true;
                 } else {
-                    std::cout << "Erro na confirmação do servidor. Reenviando requisição " << seq << "...\n";
+                    cout << "Erro na confirmação do servidor. Reenviando requisição " << seq << "...\n";
                 }
             }
         }

@@ -2,25 +2,29 @@
 #include "client.h"
 #include <cstdint>
 
+using namespace std;
 
 int main(int argc, char* argv[]) {
+    Config config;
+    cin >> config.Discovery_Port;
+    
     if (argc != 2) {
-        std::cerr << "Uso: " << argv[0] << " <server|client>\n";
+        cerr << "Uso: " << argv[0] << " <server|client>\n";
         return 1;
     }
 
-    std::string mode = argv[1];
+    string mode = argv[1];
 
     if (mode == "server") {
-        std::cout << "Começando server\n";
+        cout << "Começando server\n";
         Server server;
-        server.startListening();
+        server.startListening(config);
     } else if (mode == "client") {
-        std::cout << "Começando client\n";
+        cout << "Começando client\n";
         Client client;
-        client.discoverServer();
+        client.discoverServer(config);
     } else {
-        std::cerr << "Modo inválido! Use 'server' ou 'client'.\n";
+        cerr << "Modo inválido! Use 'server' ou 'client'.\n";
         return 1;
     }
 

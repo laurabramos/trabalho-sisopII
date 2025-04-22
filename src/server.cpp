@@ -7,15 +7,18 @@
 #include <cstdint>
 #include <mutex>
 #include <chrono>
+#include "server_client.cpp"
+#include "nodo.h"
+using namespace std;
 
 // Mutex para sincronização da lista de participantes e soma total
-std::mutex participantsMutex;
-std::mutex sumMutex;
+mutex participantsMutex;
+mutex sumMutex;
 
 // Construtor do servidor
-Server::Server() {
+Server::Server(Config config) {
     // Criação do socket UDP
-    serverSocket = createSocket(DISCOVERY_PORT);
+    serverSocket = createSocket(config.Discovery_Port);
     setSocketBroadcastOptions(serverSocket);
     setSocketTimeout(serverSocket, 3);
 }
@@ -26,15 +29,15 @@ Server::~Server() {
 }
 
 // Inicia a escuta de mensagens de descoberta e números
-void Server::startListening() {
+void Server::startListening(Config config) {
     Message message;
     socklen_t clientLen = sizeof(clientAddr);
 
     // Inicia uma thread para receber números
-    std::thread numberThread(&Server::receiveNumbers, this);
-    numberThread.detach(); 
+    std::thread t(&Server::receiveNumbers, this, config);
+    t.detach(); 
 
-    std::cout << "Servidor esperando mensagens de descoberta...\n";
+    cout << "Servidor esperando mensagens de descoberta...\n";
     
     while (true) {
         // Aguarda recebimento de mensagens de descoberta
@@ -50,7 +53,7 @@ void Server::startListening() {
 // Processa mensagens de descoberta
 void Server::handleDiscovery(Message& message, struct sockaddr_in &clientAddr) {
     if (message.type == Type::DESC) {  // Comparação com ENUM
-        std::string serverIP = getIP();
+        string serverIP = getIP();
         
         // Criar uma resposta como Message
         Message response;
@@ -60,7 +63,7 @@ void Server::handleDiscovery(Message& message, struct sockaddr_in &clientAddr) {
         sendto(serverSocket, &response, sizeof(Message), 0, 
                (struct sockaddr*)&clientAddr, sizeof(clientAddr));
 
-        std::string clientIP = inet_ntoa(clientAddr.sin_addr);// Obtém o IP do cliente
+        string clientIP = inet_ntoa(clientAddr.sin_addr);// Obtém o IP do cliente
 
         bool test = checkList(clientIP); // Verifica se já está na lista
 
@@ -68,13 +71,13 @@ void Server::handleDiscovery(Message& message, struct sockaddr_in &clientAddr) {
             participants.push_back({clientIP, 0, 0}); // Adiciona o cliente à lista de participantes
         }
         
-        std::cout << "Novo cliente registrado: " << clientIP << std::endl;
+        cout << "Novo cliente registrado: " << clientIP << std::endl;
 
     }
 }
 
 // Método para receber números enviados pelos clientes
-void Server::receiveNumbers() {
+void Server::receiveNumbers(Config config) {
     // Criação de um novo socket para receber números
     int numSocket = socket(AF_INET, SOCK_DGRAM, 0);
 
@@ -88,7 +91,7 @@ void Server::receiveNumbers() {
     memset(&numAddr, 0, sizeof(numAddr));
     numAddr.sin_family = AF_INET;
     numAddr.sin_addr.s_addr = INADDR_ANY;
-    numAddr.sin_port = htons(RESQUEST_PORT);
+    numAddr.sin_port = htons(config.Request_Port);
 
     if (bind(numSocket, (struct sockaddr*)&numAddr, sizeof(numAddr)) < 0) {
         perror("Erro ao bindar socket de números");
@@ -98,7 +101,7 @@ void Server::receiveNumbers() {
 
     // Criar múltiplas threads para processar os números
     const int NUM_THREADS = 3;
-    std::vector<std::thread> workers;
+    vector<thread> workers;
 
     for (int i = 0; i < NUM_THREADS; ++i) {
         workers.emplace_back([this, numSocket]() {
@@ -112,7 +115,7 @@ void Server::receiveNumbers() {
                 int received = recvfrom(numSocket, &number, sizeof(Message), 0, 
                                        (struct sockaddr*)&clientAddr, &clientLen);
                 if (received > 0) {
-                    std::string clientIP = inet_ntoa(clientAddr.sin_addr);
+                    string clientIP = inet_ntoa(clientAddr.sin_addr);
 
                 //std::cout << "Entrando no IF" << std::endl;
                     
@@ -138,7 +141,7 @@ void Server::receiveNumbers() {
                     sendto(numSocket, &confirmation, sizeof(Message), 0, 
                            (struct sockaddr*)&clientAddr, clientLen);
 
-                           //std::cout << "Sera que to mandando algo?" << std::endl;
+                           //cout << "Sera que to mandando algo?" << std::endl;
                 }
 
                // std::this_thread::sleep_for(std::chrono::milliseconds(1));

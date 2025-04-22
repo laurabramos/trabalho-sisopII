@@ -5,10 +5,11 @@
 #include <vector>
 #include <cstdint>
 
-#define DISCOVERY_PORT 5000
-#define RESQUEST_PORT 5001
+//#define DISCOVERY_PORT 5000
+//#define RESQUEST_PORT 5001
 #define BUFFER_SIZE 1024
 #define BROADCAST_ADDR "255.255.255.255"
+using namespace std; 
 
 //tipo de mensagens trocadas servidor-cliente
 enum class Type : uint8_t {
@@ -27,9 +28,13 @@ struct Message {
 };
 #pragma pack(pop)
 
+struct Config{ // porta de entrada
+    int Discovery_Port;
+    int Request_Port = Discovery_Port + 1;
+};
 
 struct tableClient {//estrutura da tabela de clientes
-    std::string address;
+    string address;
     uint32_t last_req;
     uint32_t last_sum;
 };
@@ -45,14 +50,14 @@ class Nodo {
         Nodo();
         virtual ~Nodo();
 
-        virtual std::string getHostname();
-        virtual std::string getIP();
+        virtual string getHostname();
+        virtual string getIP();
         int createSocket(int port);
         void setSocketBroadcastOptions(int sockfd);
         void setSocketTimeout(int sockfd, int timeoutSec);
 
     protected:
-        std::vector<tableClient> participants; // Lista de clientes (no servidor)
+        vector<tableClient> participants; // Lista de clientes (no servidor)
         tableAgregation sumTotal = {0, 0}; // Total de requisições e soma total (no servidor)
 };
 

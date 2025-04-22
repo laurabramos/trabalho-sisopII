@@ -10,8 +10,8 @@ public:
     Client();
     ~Client();
     
-    void discoverServer();
-    void sendNum(const char *serverIP);
+    void discoverServer(Config config);
+    void sendNum(const char *serverIP, Config config);
 
 private:
     int clientSocketBroad;

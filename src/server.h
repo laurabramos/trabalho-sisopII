@@ -12,10 +12,10 @@
 class Server : public Nodo {
     public:
         Server();
+        Server(Config config);
         ~Server();
-        
-        void startListening();
-        void receiveNumbers();
+        void startListening(Config config);
+        void receiveNumbers(Config config);
         void printParticipants();
         
     private:
