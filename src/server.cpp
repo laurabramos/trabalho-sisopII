@@ -5,6 +5,7 @@
 #include <unistd.h>
 #include <arpa/inet.h>
 #include <cstdint>
+#include <ctime>
 #include <mutex>
 #include <chrono>
 
@@ -23,6 +24,18 @@ Server::Server() {
 // Destrutor do servidor, fecha o socket ao encerrar
 Server::~Server() {
     close(serverSocket);
+}
+
+void Server::printInicio() {
+    time_t now = time(0);
+    struct tm *ltm = localtime(&now);
+
+    char buffer[45];  // espaço suficiente para "YYYY-MM-DD HH:MM:SS\0"
+    strftime(buffer, sizeof(buffer), "%Y-%m-%d %H:%M:%S", ltm);
+
+    strcat( buffer, " num_reqs 0 total_sum 0\n");
+
+    std::cout << buffer;
 }
 
 // Inicia a escuta de mensagens de descoberta e números

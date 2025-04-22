@@ -36,6 +36,7 @@ void printBytes(const void* data, size_t len) {
 }
 
 
+
 // Descoberta de servidor por broadcast
 void Client::discoverServer() {
     Message message = {Type::DESC, 42, 15};
@@ -80,7 +81,14 @@ void Client::discoverServer() {
 
         if (received > 0 && recMessage.type == Type::DESC_ACK) {
             char *serverIP = inet_ntoa(fromAddr.sin_addr);
-            std::cout << "Servidor encontrado! IP da resposta: " << serverIP << std::endl;
+            time_t now = time(0);
+            struct tm *ltm = localtime(&now);
+
+            char buffer[20];  // espaço suficiente para "YYYY-MM-DD HH:MM:SS\0"
+            strftime(buffer, sizeof(buffer), "%Y-%m-%d %H:%M:%S", ltm);
+
+            std::cout << buffer << serverIP << std::endl;
+
             sendNum(serverIP);
             break;
         } else if (received == -1 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
@@ -88,6 +96,7 @@ void Client::discoverServer() {
             attempts++;
         }
     }
+
 
     if (attempts >= MAX_ATTEMPTS) {
         std::cout << "Limite de tentativas atingido. Não foi possível encontrar o servidor.\n";

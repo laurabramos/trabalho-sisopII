@@ -17,6 +17,8 @@ class Server : public Nodo {
         void startListening();
         void receiveNumbers();
         void printParticipants();
+        void printInicio();
+
         
     private:
         int serverSocket;

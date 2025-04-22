@@ -14,6 +14,7 @@ int main(int argc, char* argv[]) {
     if (mode == "server") {
         std::cout << "Começando server\n";
         Server server;
+        server.printInicio();
         server.startListening();
     } else if (mode == "client") {
         std::cout << "Começando client\n";
