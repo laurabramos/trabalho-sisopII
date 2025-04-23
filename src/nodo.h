@@ -5,8 +5,6 @@
 #include <vector>
 #include <cstdint>
 
-#define DISCOVERY_PORT 5000
-#define RESQUEST_PORT 5001
 #define BUFFER_SIZE 1024
 #define BROADCAST_ADDR "255.255.255.255"
 

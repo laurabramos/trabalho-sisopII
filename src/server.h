@@ -8,14 +8,14 @@
 #include <thread>
 #include <mutex>
 
-
+using namespace std;
 class Server : public Nodo {
     public:
-        Server();
+        Server(int Discovery_Port);
         ~Server();
         
-        void startListening();
-        void receiveNumbers();
+        void startListening(int Request_Port);
+        void receiveNumbers(int Request_Port);
         void printParticipants(Message number);
         void printInicio();
 
@@ -27,8 +27,8 @@ class Server : public Nodo {
         //void handleDiscovery(char* buffer, struct sockaddr_in &clientAddr);
 
         void handleDiscovery(Message& message, struct sockaddr_in &clientAddr);
-        bool checkList(const std::string& ip);
-        void updateParticipant(const std::string& clientIP, uint32_t num);
+        bool checkList(const string& ip);
+        void updateParticipant(const string& clientIP, uint32_t num);
         void updateSumTable(uint32_t seq, uint64_t num);
     };
     

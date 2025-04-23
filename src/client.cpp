@@ -1,3 +1,26 @@
+/**
+ * Descobre o servidor na rede local enviando mensagens de broadcast e aguardando uma resposta.
+ * 
+ * Este método realiza a descoberta de um servidor na rede local utilizando mensagens de broadcast.
+ * Ele envia uma mensagem de descoberta e aguarda uma resposta do tipo DESC_ACK. Caso receba a resposta,
+ * obtém o endereço IP do servidor e chama a função `sendNum` para enviar informações adicionais.
+ * 
+ * @param Discovery_Port Porta utilizada para enviar e receber mensagens de descoberta.
+ * @param Request_Port Porta utilizada para enviar informações adicionais ao servidor após a descoberta.
+ * 
+ * O método realiza até um número máximo de tentativas (definido por MAX_ATTEMPTS) para encontrar o servidor.
+ * Caso não receba uma resposta dentro do tempo limite (definido por TIMEOUT), ele tenta novamente até atingir
+ * o limite de tentativas.
+ * 
+ * Mensagens de erro são exibidas no console caso ocorram falhas no envio ou recebimento de mensagens.
+ * 
+ * Exemplo de saída no console:
+ * - "Mandando mensagem de descoberta..."
+ * - "Nenhuma resposta do servidor. Tentando novamente..."
+ * - "YYYY-MM-DD HH:MM:SS <IP do servidor>"
+ * - "Limite de tentativas atingido. Não foi possível encontrar o servidor."
+ */
+
 #include "client.h"
 #include <iostream>
 #include <cstring>
@@ -9,16 +32,16 @@
 #include <cstdint>
 #include <fstream>
 #include <ifaddrs.h>
-
+#include "nodo.h"
 #define MAX_ATTEMPTS 5
 #define TIMEOUT 2
 
 using namespace std;
 
 // Construtor da classe Client
-Client::Client() {
+Client::Client(int Discovery_Port) {
     // Criação do socket UDP para broadcast
-    clientSocketBroad = createSocket(DISCOVERY_PORT);
+    clientSocketBroad = createSocket(Discovery_Port);
     setSocketBroadcastOptions(clientSocketBroad);
 }
 
@@ -35,17 +58,14 @@ void printBytes(const void* data, size_t len) {
     printf("\n");
 }
 
-
-
-// Descoberta de servidor por broadcast
-void Client::discoverServer() {
+void Client::discoverServer(int Discovery_Port, int Request_Port) {
     Message message = {Type::DESC, 42, 15};
     printBytes(&message, sizeof(message));  // Deve imprimir exatamente 9 bytes se tudo estiver certo
-    std::cout << "sizeof(Message): " << sizeof(Message) << std::endl;  // Deve imprimir 9
+    cout << "sizeof(Message): " << sizeof(Message) << std::endl;  // Deve imprimir 9
     int attempts = 0;   
 
     broadcastAddr.sin_family = AF_INET;
-    broadcastAddr.sin_port = htons(DISCOVERY_PORT);
+    broadcastAddr.sin_port = htons(Discovery_Port);
     broadcastAddr.sin_addr.s_addr = inet_addr(BROADCAST_ADDR);
     bzero(&(broadcastAddr.sin_zero), 8);
 
@@ -57,7 +77,7 @@ void Client::discoverServer() {
             perror("Erro no sendto (broadcast)");
         }
 
-        std::cout << "Mandando mensagem de descoberta...\n";
+        cout << "Mandando mensagem de descoberta...\n";
 
         Message recMessage;
         sockaddr_in fromAddr{};
@@ -87,25 +107,25 @@ void Client::discoverServer() {
             char buffer[21];  // espaço suficiente para "YYYY-MM-DD HH:MM:SS\0"
             strftime(buffer, sizeof(buffer), "%Y-%m-%d %H:%M:%S ", ltm);
 
-            std::cout << buffer << serverIP << std::endl;
+            cout << buffer << serverIP << endl;
 
-            sendNum(serverIP);
+            sendNum(serverIP,Request_Port);
             break;
         } else if (received == -1 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
-            std::cout << "Nenhuma resposta do servidor. Tentando novamente...\n";
+            cout << "Nenhuma resposta do servidor. Tentando novamente...\n";
             attempts++;
         }
     }
 
 
     if (attempts >= MAX_ATTEMPTS) {
-        std::cout << "Limite de tentativas atingido. Não foi possível encontrar o servidor.\n";
+        cout << "Limite de tentativas atingido. Não foi possível encontrar o servidor.\n";
     }
 }
 
 // Envia números via unicast
-void Client::sendNum(const char *serverIP) {
-    int clientSocketUni = createSocket(RESQUEST_PORT);
+void Client::sendNum(const char *serverIP, int Request_Port) {
+    int clientSocketUni = createSocket(Request_Port);
     if (clientSocketUni == -1) {
         perror("Erro ao criar socket unicast");
         return;
@@ -115,10 +135,10 @@ void Client::sendNum(const char *serverIP) {
     sockaddr_in serverAddr{};
     memset(&serverAddr, 0, sizeof(serverAddr));
     serverAddr.sin_family = AF_INET;
-    serverAddr.sin_port = htons(RESQUEST_PORT);
+    serverAddr.sin_port = htons(Request_Port);
     if (inet_pton(AF_INET, serverIP, &serverAddr.sin_addr) <= 0)
     {
-        std::cerr << "ERROR invalid address/ Address not supported." << std::endl;
+        cerr << "ERROR invalid address/ Address not supported." << endl;
         close(clientSocketUni);
         return;
     }
@@ -152,11 +172,21 @@ void Client::sendNum(const char *serverIP) {
                     seq++;
                     confirmed = true;
                 } else {
-                    std::cout << "Erro na confirmação do servidor. Reenviando requisição " << seq << "...\n";
+                    cout << "Erro na confirmação do servidor. Reenviando requisição " << seq << "...\n";
                 }
             }
         }
     }
 
     close(clientSocketUni);
+}
+int main(int argc, char* argv[]){
+    int Discovery_Port;
+    cerr << argv[1] << endl;
+    Discovery_Port = atoi(argv[1]);
+    int Request_Port = Discovery_Port + 1;
+    cout << "Começando client\n";
+    Client client(Discovery_Port);
+    client.discoverServer(Discovery_Port, Request_Port);
+    return 0;
 }

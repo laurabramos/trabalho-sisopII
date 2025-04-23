@@ -1,5 +1,6 @@
-# Nome do executável
-EXEC = server_client
+# Nome dos executáveis
+CLIENT_EXEC = client
+SERVER_EXEC = server
 
 # Compilador e flags
 CXX = g++
@@ -9,31 +10,43 @@ CXXFLAGS = -std=c++11 -Wall
 SRC_DIR = src
 OBJ_DIR = obj
 
-# Arquivos de código fonte
-SRC = $(SRC_DIR)/server_client.cpp $(SRC_DIR)/nodo.cpp $(SRC_DIR)/server.cpp $(SRC_DIR)/client.cpp
+# Fontes comuns
+COMMON_SRC = $(SRC_DIR)/nodo.cpp
 
-# Arquivos de objetos
-OBJ = $(SRC:$(SRC_DIR)/%.cpp=$(OBJ_DIR)/%.o)
+# Fontes específicos
+CLIENT_SRC = $(SRC_DIR)/client.cpp
+SERVER_SRC = $(SRC_DIR)/server.cpp
 
-# Regra para compilar o projeto
-all: $(EXEC)
+# Objetos
+COMMON_OBJ = $(COMMON_SRC:$(SRC_DIR)/%.cpp=$(OBJ_DIR)/%.o)
+CLIENT_OBJ = $(CLIENT_SRC:$(SRC_DIR)/%.cpp=$(OBJ_DIR)/%.o)
+SERVER_OBJ = $(SERVER_SRC:$(SRC_DIR)/%.cpp=$(OBJ_DIR)/%.o)
 
-# Regra para compilar o executável
-$(EXEC): $(OBJ)
+# Regra principal
+all: $(CLIENT_EXEC) $(SERVER_EXEC)
+
+# Regras dos executáveis
+$(CLIENT_EXEC): $(CLIENT_OBJ) $(COMMON_OBJ)
 	$(CXX) $(CXXFLAGS) -o $@ $^
 
-# Regra para compilar os arquivos .cpp para .o
+$(SERVER_EXEC): $(SERVER_OBJ) $(COMMON_OBJ)
+	$(CXX) $(CXXFLAGS) -o $@ $^
+
+# Compilar .cpp para .o
 $(OBJ_DIR)/%.o: $(SRC_DIR)/%.cpp | $(OBJ_DIR)
 	$(CXX) $(CXXFLAGS) -c $< -o $@
 
-# Limpeza dos arquivos gerados
-clean:
-	rm -rf $(OBJ_DIR)/*.o $(EXEC)
-
-# Regra para criar os diretórios de objetos
+# Criação da pasta obj se não existir
 $(OBJ_DIR):
 	mkdir -p $(OBJ_DIR)
 
-# Para rodar o programa
-run: $(EXEC)
-	./$(EXEC)
+# Limpeza
+clean:
+	rm -rf $(OBJ_DIR)/*.o $(CLIENT_EXEC) $(SERVER_EXEC)
+
+# Rodar individualmente
+run-client: $(CLIENT_EXEC)
+	./$(CLIENT_EXEC)
+
+run-server: $(SERVER_EXEC)
+	./$(SERVER_EXEC)
