@@ -110,10 +110,8 @@ void Server::handleDiscovery(Message& message, struct sockaddr_in &clientAddr) {
 
         if(test == false){
             participants.push_back({clientIP, 0, 0}); // Adiciona o cliente à lista de participantes
+            cout << "Novo cliente registrado: " << clientIP << endl;
         }
-        
-        cout << "Novo cliente registrado: " << clientIP << endl;
-
     }
 }
 

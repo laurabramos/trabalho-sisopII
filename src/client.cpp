@@ -68,7 +68,8 @@ void Client::discoverServer(int Discovery_Port, int Request_Port) {
     broadcastAddr.sin_port = htons(Discovery_Port);
     broadcastAddr.sin_addr.s_addr = inet_addr(BROADCAST_ADDR);
     bzero(&(broadcastAddr.sin_zero), 8);
-
+    
+    cout << "Mandando mensagem de descoberta...\n";
     while (attempts < MAX_ATTEMPTS) {
         // Envia broadcast
         ssize_t sent = sendto(clientSocketBroad, &message, sizeof(message), 0,
@@ -77,7 +78,6 @@ void Client::discoverServer(int Discovery_Port, int Request_Port) {
             perror("Erro no sendto (broadcast)");
         }
 
-        cout << "Mandando mensagem de descoberta...\n";
 
         Message recMessage;
         sockaddr_in fromAddr{};
