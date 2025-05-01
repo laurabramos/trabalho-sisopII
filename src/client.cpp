@@ -58,6 +58,10 @@ void printBytes(const void* data, size_t len) {
     printf("\n");
 }
 
+// Print inicial assim: Ao iniciar, o cliente deverá OBRIGATORIAMENTE exibir na tela uma mensagem informando a data e hora atual e o
+// endereço IP do servidor (após a descoberta ser finalizada):
+// 2024-10-01 18:37:00 server_addr 1.1.1.20
+
 void Client::discoverServer(int Discovery_Port, int Request_Port) {
     Message message = {Type::DESC, 42, 15};
     printBytes(&message, sizeof(message));  // Deve imprimir exatamente 9 bytes se tudo estiver certo
@@ -169,6 +173,19 @@ void Client::sendNum(const char *serverIP, int Request_Port) {
                                         (struct sockaddr*)&serverAddr, &serverLen);
                 //printf("adkfajjjjjjjjjj");
                 if (received > 0 && response.seq == seq) {
+                    
+                    
+                    time_t now = time(0);
+                    struct tm *ltm = localtime(&now);
+
+                    char buffer[21];  // espaço suficiente para "YYYY-MM-DD HH:MM:SS\0"
+                    strftime(buffer, sizeof(buffer), "%Y-%m-%d %H:%M:%S ", ltm);
+
+                    cout << buffer << "server " << serverIP 
+                                   << " id_req " << response.seq 
+                                   << " value " << num 
+                                   << " num_reqs " << response.num 
+                                   << " total_sum " << response.seq * num << endl;
                     seq++;
                     confirmed = true;
                 } else {
@@ -186,6 +203,7 @@ int main(int argc, char* argv[]){
     Discovery_Port = atoi(argv[1]);
     int Request_Port = Discovery_Port + 1;
     cout << "Começando client\n";
+
     Client client(Discovery_Port);
     client.discoverServer(Discovery_Port, Request_Port);
     return 0;
