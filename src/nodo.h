@@ -30,6 +30,7 @@ struct tableClient {//estrutura da tabela de clientes
     std::string address;
     uint32_t last_req;
     uint32_t last_sum;
+    uint32_t last_value;
 };
 
 struct tableAgregation {//estrutura da tabela de soma
