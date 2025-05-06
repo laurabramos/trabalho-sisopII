@@ -42,7 +42,7 @@ using namespace std;
 // Mutex para sincronização da lista de participantes e soma total
 mutex participantsMutex;
 mutex sumMutex;
-/*Funções utilizadas */
+long long int numreqs= 0;
 
 // Construtor do servidor
 Server::Server(int Discovery_Port)
@@ -166,9 +166,16 @@ void Server::receiveNumbers(int Request_Port)
                 // Aguarda recebimento de número
                 int received = recvfrom(numSocket, &number, sizeof(Message), 0, 
                                        (struct sockaddr*)&clientAddr, &clientLen);
+                if(received > 0 && numreqs == number.seq){
+                    
+                    Message confirmation = {Type::REQ_ACK, 0, number.seq};
+
+                    sendto(numSocket, &confirmation, sizeof(Message), 0, 
+                           (struct sockaddr*)&clientAddr, clientLen);
+
+                }
                 if (received > 0) {
                     string clientIP = inet_ntoa(clientAddr.sin_addr);
-
                 //std::cout << "Entrando no IF" << std::endl;
                     
                     {
@@ -194,6 +201,8 @@ void Server::receiveNumbers(int Request_Port)
                            (struct sockaddr*)&clientAddr, clientLen);
 
                            //std::cout << "Sera que to mandando algo?" << std::endl;
+                           numreqs = number.seq;
+
                 }
 
                // std::this_thread::sleep_for(std::chrono::milliseconds(1));
