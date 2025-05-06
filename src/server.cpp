@@ -224,7 +224,7 @@ void Server::printParticipants(Message number)
         {
             cout << buffer
                  << "client " << p.address
-                 << " DUP!! id_req " << p.last_req
+                 << "id_req " << p.last_req
                  << " value " << p.last_value
                  << " num_reqs " << sumTotal.num_reqs
                  << " total_sum " << p.last_sum << std::endl;
@@ -233,7 +233,7 @@ void Server::printParticipants(Message number)
         {
             cout << buffer
                  << "client " << p.address
-                 << " id_req " << p.last_req
+                 << " DUP!! id_req " << p.last_req
                  << " value " << p.last_value
                  << " num_reqs " << sumTotal.num_reqs
                  << " total_sum " << p.last_sum << std::endl;
@@ -277,13 +277,13 @@ void Server::updateParticipant(const string &clientIP, uint32_t num)
 
 void Server::updateSumTable(uint32_t seq, uint64_t num)
 {
-
+    std::lock_guard<std::mutex> lock(sumMutex);  
     sumTotal.num_reqs++;
     sumTotal.sum += num;
     if (sumTotal.num_reqs % 100000 == 0)
     {
-        cout << "Total de requisições: " << sumTotal.num_reqs << endl;
-        cout << "Soma total: " << sumTotal.sum << endl;
+        //cout << "Total de requisições: " << sumTotal.num_reqs << endl;
+        //cout << "Soma total: " << sumTotal.sum << endl;
     }
 }
 
@@ -292,7 +292,7 @@ int main(int argc, char *argv[])
     int Discovery_Port;
     cerr << argv[1] << endl;
     Discovery_Port = atoi(argv[1]);
-    cout << "Começando server\n";
+    //cout << "Começando server\n";
     int Request_Port = Discovery_Port + 1;
 
     Server server(Discovery_Port);
