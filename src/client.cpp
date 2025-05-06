@@ -51,11 +51,11 @@ Client::~Client() {
 }
 
 void printBytes(const void* data, size_t len) {
-    const uint8_t* bytes = static_cast<const uint8_t*>(data);
-    for (size_t i = 0; i < len; ++i) {
-        printf("%02X ", bytes[i]);
-    }
-    printf("\n");
+    //const uint8_t* bytes = static_cast<const uint8_t*>(data);
+    //for (size_t i = 0; i < len; ++i) {
+    //    printf("%02X ", bytes[i]);
+    //}
+    //printf("\n");
 }
 
 // Print inicial assim: Ao iniciar, o cliente deverá OBRIGATORIAMENTE exibir na tela uma mensagem informando a data e hora atual e o
@@ -65,7 +65,7 @@ void printBytes(const void* data, size_t len) {
 void Client::discoverServer(int Discovery_Port, int Request_Port) {
     Message message = {Type::DESC, 42, 15};
     printBytes(&message, sizeof(message));  // Deve imprimir exatamente 9 bytes se tudo estiver certo
-    cout << "sizeof(Message): " << sizeof(Message) << std::endl;  // Deve imprimir 9
+    //cout << "sizeof(Message): " << sizeof(Message) << std::endl;  // Deve imprimir 9
     int attempts = 0;   
 
     broadcastAddr.sin_family = AF_INET;
@@ -73,7 +73,7 @@ void Client::discoverServer(int Discovery_Port, int Request_Port) {
     broadcastAddr.sin_addr.s_addr = inet_addr(BROADCAST_ADDR);
     bzero(&(broadcastAddr.sin_zero), 8);
     
-    cout << "Mandando mensagem de descoberta...\n";
+    //cout << "Mandando mensagem de descoberta...\n";
     while (attempts < MAX_ATTEMPTS) {
         // Envia broadcast
         ssize_t sent = sendto(clientSocketBroad, &message, sizeof(message), 0,
@@ -148,6 +148,7 @@ void Client::sendNum(const char *serverIP, int Request_Port) {
     }
 
     uint32_t num;
+    uint32_t soma = 0;
     uint32_t seq = 1;
 
     while (true){
@@ -174,7 +175,8 @@ void Client::sendNum(const char *serverIP, int Request_Port) {
                 //printf("adkfajjjjjjjjjj");
                 if (received > 0 && response.seq == seq) {
                     
-                    
+                    soma+=num;
+
                     time_t now = time(0);
                     struct tm *ltm = localtime(&now);
 
@@ -184,8 +186,8 @@ void Client::sendNum(const char *serverIP, int Request_Port) {
                     cout << buffer << "server " << serverIP 
                                    << " id_req " << response.seq 
                                    << " value " << num 
-                                   << " num_reqs " << response.num 
-                                   << " total_sum " << response.seq * num << endl;
+                                   << " num_reqs " << response.seq 
+                                   << " total_sum " << soma << endl;
                     seq++;
                     confirmed = true;
                 } else {
@@ -202,7 +204,7 @@ int main(int argc, char* argv[]){
     cerr << argv[1] << endl;
     Discovery_Port = atoi(argv[1]);
     int Request_Port = Discovery_Port + 1;
-    cout << "Começando client\n";
+    //cout << "Começando client\n";
 
     Client client(Discovery_Port);
     client.discoverServer(Discovery_Port, Request_Port);
