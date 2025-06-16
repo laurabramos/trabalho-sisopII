@@ -14,7 +14,7 @@
  * 
  * @note Certifique-se de fechar o socket retornado quando ele não for mais necessário para evitar vazamentos de recursos.
  */
-#include "nodo.h"
+#include "libs/nodo.h"
 #include <netdb.h>
 #include <cstring>
 #include <arpa/inet.h>
