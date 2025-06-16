@@ -99,7 +99,7 @@ int Nodo::createSocket(int port)
          }
      }
 
-    return sockfd;
+    return sockfd;                 //printf("adkfajjjjjjjjjj");
 }
 
 void Nodo::setSocketBroadcastOptions(int sockfd)

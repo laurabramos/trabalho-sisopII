@@ -16,8 +16,11 @@ class Server : public Nodo {
         
         void startListening(int Request_Port);
         void receiveNumbers(int Request_Port);
-        void printParticipants(Message number);
+        void printParticipants(const std::string &clientIP, const Message &number);
         void printInicio();
+        bool isDuplicateRequest(const string &clientIP, uint32_t seq);
+        void updateParticipant(const string &clientIP, uint32_t seq, uint32_t num);
+        void printRepet(const std::string &clientIP, const Message &number);
 
         
     private:

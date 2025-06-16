@@ -1,10 +1,10 @@
 # Nome dos executáveis
-CLIENT_EXEC = client
-SERVER_EXEC = server
+CLIENT_EXEC = cliente
+SERVER_EXEC = servidor
 
 # Compilador e flags
 CXX = g++
-CXXFLAGS = -std=c++11 -Wall
+CXXFLAGS = -std=c++11 -Wall -march=native
 
 # Diretórios
 SRC_DIR = src

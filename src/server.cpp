@@ -42,7 +42,8 @@ using namespace std;
 // Mutex para sincronização da lista de participantes e soma total
 mutex participantsMutex;
 mutex sumMutex;
-long long int numreqs= 0;
+long long int numreqs = 0;
+/*Funções utilizadas */
 
 // Construtor do servidor
 Server::Server(int Discovery_Port)
@@ -82,7 +83,7 @@ void Server::startListening(int Request_Port)
     thread numberThread(&Server::receiveNumbers, this, Request_Port);
     numberThread.detach();
 
-    cout << "Servidor esperando mensagens de descoberta...\n";
+    //cout << "Servidor esperando mensagens de descoberta...\n";
 
     while (true)
     {
@@ -158,7 +159,6 @@ void Server::receiveNumbers(int Request_Port)
         workers.emplace_back([this, numSocket]()
                              {
             while (true) {
-                //std::cout << "Entrando na thread" << std::endl;
                 Message number;//estrutura para troca de pacotes
                 struct sockaddr_in clientAddr;
                 socklen_t clientLen = sizeof(clientAddr);
@@ -166,46 +166,40 @@ void Server::receiveNumbers(int Request_Port)
                 // Aguarda recebimento de número
                 int received = recvfrom(numSocket, &number, sizeof(Message), 0, 
                                        (struct sockaddr*)&clientAddr, &clientLen);
-                if(received > 0 && numreqs == number.seq){
-                    
-                    Message confirmation = {Type::REQ_ACK, 0, number.seq};
 
-                    sendto(numSocket, &confirmation, sizeof(Message), 0, 
-                           (struct sockaddr*)&clientAddr, clientLen);
-
-                }
                 if (received > 0) {
                     string clientIP = inet_ntoa(clientAddr.sin_addr);
-                //std::cout << "Entrando no IF" << std::endl;
-                    
+                    bool isDuplicate = false;
+                                 
                     {
-                        
-                        // Atualiza informações do participante
                         lock_guard<mutex> lock(participantsMutex);
-                        updateParticipant(clientIP, number.num);
-                    
+                        isDuplicate = isDuplicateRequest(clientIP, number.seq);
                     }
+                           
+                    if (isDuplicate){
+                        printRepet(clientIP, number);
+                    }
+                    else if (!isDuplicate) {
+                        {
+                            lock_guard<mutex> lock(participantsMutex);
+                            updateParticipant(clientIP, number.seq, number.num);
+                        }
+                                
+                        {
+                        lock_guard<mutex> lock(sumMutex); // A função utiliza mutexes para garantir a consistência dos dados compartilhados entre threads.
 
-                    {
-                        // Atualiza a tabela de soma total
-                        lock_guard<mutex> lock(sumMutex);
                         updateSumTable(number.seq, number.num);
+                        }
+                        printParticipants(clientIP, number);
                     }
-
-                    printParticipants(number); // Imprime a lista de participantes
-
-                    // Envia confirmação para o cliente
+                                    
+                    // Sempre envia o ACK, mesmo que seja duplicado
                     Message confirmation = {Type::REQ_ACK, 0, number.seq};
-
-                    sendto(numSocket, &confirmation, sizeof(Message), 0, 
-                           (struct sockaddr*)&clientAddr, clientLen);
-
-                           //std::cout << "Sera que to mandando algo?" << std::endl;
-                           numreqs = number.seq;
-
+                    sendto(numSocket, &confirmation, sizeof(Message), 0,
+                    (struct sockaddr *)&clientAddr, clientLen);
+                                
                 }
-
-               // std::this_thread::sleep_for(std::chrono::milliseconds(1));
+                                
             } });
     }
 
@@ -218,36 +212,74 @@ void Server::receiveNumbers(int Request_Port)
 }
 
 // Imprime a lista de participantes e seus últimos valores recebidos
-void Server::printParticipants(Message number)
+void Server::printParticipants(const std::string &clientIP, const Message &number)
 {
     time_t now = time(0);
     struct tm *ltm = localtime(&now);
 
     char buffer[21]; // espaço suficiente para "YYYY-MM-DD HH:MM:SS\0"
-    strftime(buffer, sizeof(buffer), "%Y-%m-%d %H:%M:%S ", ltm);
+    strftime(buffer, sizeof(buffer), "%Y-%m-%d %H:%M:%S", ltm);
 
+    lock_guard<mutex> lock(participantsMutex); // Protege acesso à lista
 
     for (const auto &p : participants)
     {
-        if (p.last_req == number.seq)   //TESTAR 
+        if (p.address == clientIP)
         {
-            cout << buffer
-                 << "client " << p.address
-                 << "id_req " << p.last_req
-                 << " value " << p.last_value
-                 << " num_reqs " << sumTotal.num_reqs
-                 << " total_sum " << p.last_sum << std::endl;
-        }
-        else
-        {
-            cout << buffer
-                 << "client " << p.address
-                 << " DUP!! id_req " << p.last_req
-                 << " value " << p.last_value
-                 << " num_reqs " << sumTotal.num_reqs
-                 << " total_sum " << p.last_sum << std::endl;
+                cout << buffer
+                     << " client " << p.address
+                     << " id_req " << p.last_req
+                     << " value " << p.last_value
+                     << " num_reqs " << sumTotal.num_reqs
+                     << " total_sum " << sumTotal.sum << std::endl;
+            
+            break; // já encontrou o cliente, não precisa continuar
         }
     }
+}
+
+void Server::printRepet(const std::string &clientIP, const Message &number)
+{
+    time_t now = time(0);
+    struct tm *ltm = localtime(&now);
+
+    char buffer[21]; // espaço suficiente para "YYYY-MM-DD HH:MM:SS\0"
+    strftime(buffer, sizeof(buffer), "%Y-%m-%d %H:%M:%S", ltm);
+
+    lock_guard<mutex> lock(participantsMutex); // Protege acesso à lista
+
+    for (const auto &p : participants)
+    {
+        if (p.address == clientIP)
+        {
+                cout << buffer
+                     << " client " << p.address
+                     << " DUP !! id_req " << p.last_req
+                     << " value " << p.last_value
+                     << " num_reqs " << sumTotal.num_reqs
+                     << " total_sum " << sumTotal.sum << std::endl;
+            
+            break; // já encontrou o cliente, não precisa continuar
+        }
+    }
+}
+
+
+bool Server::isDuplicateRequest(const string &clientIP, uint32_t seq)
+{
+    time_t now = time(0);
+    struct tm *ltm = localtime(&now);
+
+    char buffer[21]; // espaço suficiente para "YYYY-MM-DD HH:MM:SS\0"
+    strftime(buffer, sizeof(buffer), "%Y-%m-%d %H:%M:%S", ltm);
+    for (const auto &p : participants)
+    {
+        if (p.address == clientIP)
+        {
+            return (p.last_req == seq); // true se já foi processado
+        }
+    }
+    return false;
 }
 
 // Verifica se um IP já está na lista de participantes
@@ -257,43 +289,38 @@ bool Server::checkList(const std::string &ip)
     {
         if (participant.address == ip)
         {
-            // std::cout << "Esta na list \n";
             return true; // IP encontrado na lista
         }
     }
     return false; // IP não está na lista
 }
 
-// Atualiza os dados de um participante
-void Server::updateParticipant(const string &clientIP, uint32_t num)
-{
 
+
+void Server::updateParticipant(const string &clientIP, uint32_t seq, uint32_t num)
+{
     for (auto &p : participants)
     {
         if (p.address == clientIP)
         {
             p.last_sum += num;
-            p.last_req++;
+            p.last_req = seq;
             p.last_value = num;
             return;
         }
     }
-    // Se não encontrou o IP, adiciona um novo participante
-    participants.push_back({clientIP, num, 0});
+    // Se for um novo IP, adiciona
+    participants.push_back({clientIP, num, seq});
 }
 
 // Atualiza a soma total das requisições
 
 void Server::updateSumTable(uint32_t seq, uint64_t num)
 {
-    std::lock_guard<std::mutex> lock(sumMutex);  
+   
     sumTotal.num_reqs++;
     sumTotal.sum += num;
-    if (sumTotal.num_reqs % 100000 == 0)
-    {
-        //cout << "Total de requisições: " << sumTotal.num_reqs << endl;
-        //cout << "Soma total: " << sumTotal.sum << endl;
-    }
+
 }
 
 int main(int argc, char *argv[])
@@ -301,7 +328,7 @@ int main(int argc, char *argv[])
     int Discovery_Port;
     cerr << argv[1] << endl;
     Discovery_Port = atoi(argv[1]);
-    //cout << "Começando server\n";
+   
     int Request_Port = Discovery_Port + 1;
 
     Server server(Discovery_Port);
