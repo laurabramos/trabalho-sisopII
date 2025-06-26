@@ -1,7 +1,4 @@
-/**
- * Cliente que descobre o servidor na rede local usando broadcast
- * e envia números via unicast.
- */
+// client.cpp - VERSÃO CORRIGIDA
 
 #include "client.h"
 #include <iostream>
@@ -16,99 +13,85 @@
 #include <ifaddrs.h>
 #include "nodo.h"
 #include <limits>
+#include <string>
 
 #define MAX_ATTEMPTS 5
 #define TIMEOUT 2
+#define MAX_SEND_ATTEMPTS 3
 
 using namespace std;
 
-// Construtor da classe Client
+// Construtor não precisa mais gerenciar o socket de broadcast
 Client::Client(int Discovery_Port) {
-    // Criação do socket UDP para broadcast
-    clientSocketBroad = createSocket(Discovery_Port);
-    setSocketBroadcastOptions(clientSocketBroad);
+    // Vazio
 }
 
-// Destrutor
+// Destrutor também não precisa mais gerenciar
 Client::~Client() {
-    close(clientSocketBroad);
+    // Vazio
 }
 
-void printBytes(const void* data, size_t len) {
-    const uint8_t* bytes = static_cast<const uint8_t*>(data);
-    for (size_t i = 0; i < len; ++i) {
-        printf("%02X ", bytes[i]);
+std::string Client::discoverServer(int Discovery_Port, int Request_Port) {
+    int discoverySocket = createSocket(0);
+
+    if (discoverySocket == -1) {
+        perror("Erro ao criar socket de descoberta");
+        return "";
     }
-    printf("\n");
-}
-
-// Descoberta do servidor via broadcast
-void Client::discoverServer(int Discovery_Port, int Request_Port) {
-    Message message = {Type::DESC, 42, 15};
+    setSocketBroadcastOptions(discoverySocket);
+    
+    Message message = {Type::DESC, 0, 0}; // Num e seq podem ser 0 para descoberta
     int attempts = 0;
 
     broadcastAddr.sin_family = AF_INET;
     broadcastAddr.sin_port = htons(Discovery_Port);
     broadcastAddr.sin_addr.s_addr = inet_addr(BROADCAST_ADDR);
-    bzero(&(broadcastAddr.sin_zero), 8);
+    
+    cout << "Procurando servidor na rede..." << endl;
 
     while (attempts < MAX_ATTEMPTS) {
-        // Envia broadcast
-        ssize_t sent = sendto(clientSocketBroad, &message, sizeof(message), 0,
-                              (struct sockaddr*)&broadcastAddr, sizeof(broadcastAddr));
-        if (sent == -1) {
-            perror("Erro no sendto (broadcast)");
-        }
+        sendto(discoverySocket, &message, sizeof(message), 0,
+               (struct sockaddr*)&broadcastAddr, sizeof(broadcastAddr));
 
-        Message recMessage;
-        sockaddr_in fromAddr{};
-        socklen_t fromLen = sizeof(fromAddr);
-        int received = -1;
-
-        // Select para esperar resposta
         fd_set read_fds;
         struct timeval timeout;
         timeout.tv_sec = TIMEOUT;
         timeout.tv_usec = 0;
         FD_ZERO(&read_fds);
-        FD_SET(clientSocketBroad, &read_fds);
+        FD_SET(discoverySocket, &read_fds);
 
-        int selectResult = select(clientSocketBroad + 1, &read_fds, NULL, NULL, &timeout);
+        int selectResult = select(discoverySocket + 1, &read_fds, NULL, NULL, &timeout);
+        
+        if (selectResult > 0 && FD_ISSET(discoverySocket, &read_fds)) {
+            Message recMessage;
+            sockaddr_in fromAddr{};
+            socklen_t fromLen = sizeof(fromAddr);
+            int received = recvfrom(discoverySocket, &recMessage, sizeof(Message), 0,
+                                    (struct sockaddr*)&fromAddr, &fromLen);
 
-        if (selectResult > 0 && FD_ISSET(clientSocketBroad, &read_fds)) {
-            received = recvfrom(clientSocketBroad, &recMessage, sizeof(Message), 0,
-                                (struct sockaddr*)&fromAddr, &fromLen);
+            if (received > 0 && recMessage.type == Type::DESC_ACK) {
+                std::string serverIP = inet_ntoa(fromAddr.sin_addr);
+                cout << "Servidor encontrado em: " << serverIP << endl;
+                
+                close(discoverySocket); // Fecha o socket temporário
+                return serverIP; 
+            }
         }
-
-        if (received > 0 && recMessage.type == Type::DESC_ACK) {
-            char *serverIP = inet_ntoa(fromAddr.sin_addr);
-            time_t now = time(0);
-            struct tm *ltm = localtime(&now);
-
-            char buffer[21];
-            strftime(buffer, sizeof(buffer), "%Y-%m-%d %H:%M:%S ", ltm);
-
-            cout << buffer << serverIP << endl;
-
-            sendNum(serverIP, Request_Port);
-            break;
-        } else if (received == -1 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
-            cout << "Nenhuma resposta do servidor. Tentando novamente...\n";
-            attempts++;
-        }
+        
+        cout << "Tentativa " << attempts + 1 << ": Nenhuma resposta do servidor.\n";
+        attempts++;
     }
 
-    if (attempts >= MAX_ATTEMPTS) {
-        cout << "Limite de tentativas atingido. Não foi possível encontrar o servidor.\n";
-    }
+    cout << "Limite de tentativas atingido. Não foi possível encontrar o servidor.\n";
+    close(discoverySocket); // Fecha o socket temporário em caso de falha
+    return ""; 
 }
 
-// Envia números via unicast com tratamento de EOF
-void Client::sendNum(const char *serverIP, int Request_Port) {
-    int clientSocketUni = createSocket(Request_Port);
+bool Client::sendNum(const std::string& serverIP, int Request_Port) {
+    int clientSocketUni = createSocket(0); // Também não precisa de bind
     if (clientSocketUni == -1) {
         perror("Erro ao criar socket unicast");
-        return;
+        return false;
     }
     setSocketTimeout(clientSocketUni, 3);
 
@@ -116,15 +99,18 @@ void Client::sendNum(const char *serverIP, int Request_Port) {
     memset(&serverAddr, 0, sizeof(serverAddr));
     serverAddr.sin_family = AF_INET;
     serverAddr.sin_port = htons(Request_Port);
-    if (inet_pton(AF_INET, serverIP, &serverAddr.sin_addr) <= 0) {
+    if (inet_pton(AF_INET, serverIP.c_str(), &serverAddr.sin_addr) <= 0) {
         cerr << "ERROR invalid address/ Address not supported." << endl;
         close(clientSocketUni);
-        return;
+        return false;
     }
 
     uint32_t num;
-    uint32_t soma = 0;
-    uint32_t seq = 1;
+    // uint32_t soma = 0;
+    // uint32_t seq = 1;
+
+    cout << "Conectado ao servidor " << serverIP << ". Pode começar a enviar números." << endl;
+    cout << "(Use Ctrl+D para finalizar)" << endl;
 
     while (true) {
         if (!(std::cin >> num)) {
@@ -139,56 +125,75 @@ void Client::sendNum(const char *serverIP, int Request_Port) {
         }
 
         bool confirmed = false;
+        int send_attempts = 0;
 
         while (!confirmed) {
-            Message message = {Type::REQ, num, seq};
-
-            if (sendto(clientSocketUni, &message, sizeof(Message), 0,
-                       (struct sockaddr*)&serverAddr, sizeof(serverAddr)) == -1) {
-                perror("Erro ao enviar número");
+            if (send_attempts >= MAX_SEND_ATTEMPTS) {
+                cout << "Servidor " << serverIP << " não está respondendo. Falha na comunicação." << endl;
                 close(clientSocketUni);
-                return;
+                return false;
             }
+
+            Message message = {Type::REQ, num, this->current_seq, 0, 0, 0};
+
+            sendto(clientSocketUni, &message, sizeof(Message), 0,
+                   (struct sockaddr*)&serverAddr, sizeof(serverAddr));
 
             Message response;
             socklen_t serverLen = sizeof(serverAddr);
 
             int received = recvfrom(clientSocketUni, &response, sizeof(Message), 0,
                                     (struct sockaddr*)&serverAddr, &serverLen);
-            if (received > 0 && response.seq == seq) {
-                soma += num;
 
+            if (received > 0 && response.type == Type::REQ_ACK && response.seq == this->current_seq) {
                 time_t now = time(0);
                 struct tm *ltm = localtime(&now);
-
                 char buffer[21];
                 strftime(buffer, sizeof(buffer), "%Y-%m-%d %H:%M:%S ", ltm);
-
                 cout << buffer << "server " << serverIP
                      << " id_req " << response.seq
                      << " value " << num
                      << " num_reqs " << response.seq
-                     << " total_sum " << soma << endl;
+                     << " total_sum " << response.total_sum << endl;
 
-                seq++;
+                this->current_seq++; // Incrementa o número de sequência da classe
                 confirmed = true;
             } else {
-                cout << "Erro na confirmação do servidor. Reenviando requisição " << seq << "...\n";
+                cout << "Erro na confirmação do servidor. Reenviando requisição " << this->current_seq << " (tentativa " << send_attempts + 1 << ")...\n";
+                send_attempts++;
             }
         }
     }
 
     close(clientSocketUni);
+    return true;
 }
 
-// Função principal
 int main(int argc, char* argv[]) {
-    int Discovery_Port;
-    cerr << argv[1] << endl;
-    Discovery_Port = atoi(argv[1]);
+    if (argc < 2) {
+        cerr << "Uso: " << argv[0] << " <porta_descoberta>" << endl;
+        return 1;
+    }
+
+    int Discovery_Port = atoi(argv[1]);
     int Request_Port = Discovery_Port + 1;
 
     Client client(Discovery_Port);
-    client.discoverServer(Discovery_Port, Request_Port);
+
+    while (true) {
+        std::string serverIP = client.discoverServer(Discovery_Port, Request_Port);
+
+        if (!serverIP.empty()) {
+            bool success = client.sendNum(serverIP, Request_Port);
+            if (success) {
+                cout << "Finalizando cliente." << endl;
+                break;
+            }
+        } else {
+            cout << "Não foi possível encontrar um servidor. Tentando novamente em 5 segundos..." << endl;
+            sleep(5);
+        }
+    }
+
     return 0;
 }

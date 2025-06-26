@@ -1,18 +1,22 @@
-# Usando uma imagem base com C++ e gcc pré-instalados
-FROM gcc:latest
+# Estágio 1: Builder (usando Debian Bookworm como base, que usa o GCC 12)
+FROM gcc:12 AS builder
 
-# Definindo o diretório de trabalho dentro do container
+# Define o diretório de trabalho
 WORKDIR /app
 
-# Copiando o arquivo Makefile e o diretório src (com os arquivos .cpp) para dentro do container
+# Copia o Makefile e o código-fonte para o contêiner
 COPY Makefile .
 COPY src/ ./src/
 
-# Instalando o make (se necessário)
-RUN apt-get update && apt-get install -y make
-
-# Compilando o código dentro do container
+# Compila os executáveis 'cliente' e 'servidor' usando o Makefile
 RUN make
 
-# Listando os arquivos copiados e compilados
-RUN ls -R /app
+# Estágio 2: Imagem Final (usando a mesma base, Debian Bookworm)
+FROM debian:bookworm-slim
+
+# Define o diretório de trabalho
+WORKDIR /app
+
+# Copia APENAS os executáveis compilados do estágio de 'builder'
+COPY --from=builder /app/cliente .
+COPY --from=builder /app/servidor .

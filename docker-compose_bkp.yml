@@ -1,0 +1,47 @@
+services:
+  server:
+    build: .
+    container_name: server
+    # Comando para iniciar o servidor, escutando na porta 5500
+    command: ["./servidor", "5500"]
+    networks:
+      - app-net
+
+  client1:
+    build: .
+    container_name: client1
+    # Comando para iniciar o cliente, que tentará descobrir o servidor na porta 5500
+    command: ["./cliente", "5500"]
+    networks:
+      - app-net
+    depends_on:
+      - server
+    # Mantém o stdin aberto para que possamos enviar números para o cliente depois
+    stdin_open: true
+    #tty: true
+
+  client2:
+    build: .
+    container_name: client2
+    command: ["./cliente", "5500"]
+    networks:
+      - app-net
+    depends_on:
+      - server
+    stdin_open: true
+    #tty: true
+
+  client3:
+    build: .
+    container_name: client3
+    command: ["./cliente", "5500"]
+    networks:
+      - app-net
+    depends_on:
+      - server
+    stdin_open: true
+    #tty: true
+
+networks:
+  app-net:
+    driver: bridge

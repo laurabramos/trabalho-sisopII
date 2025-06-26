@@ -1,0 +1,32 @@
+services:
+  server1:
+    build: .
+    container_name: server1
+    command: ["./servidor", "5500"] 
+    networks:
+      - app-net
+    depends_on:
+      - server2
+
+  server2:
+    build: .
+    container_name: server2
+    command: ["./servidor", "5500"] 
+    networks:
+      - app-net
+    # depends_on:
+    #   - server1
+
+  client1:
+    build: .
+    container_name: client1
+    command: ["./cliente", "5500"]
+    networks:
+      - app-net
+    stdin_open: true
+    depends_on:
+      - server1
+
+networks:
+  app-net:
+    driver: bridge
