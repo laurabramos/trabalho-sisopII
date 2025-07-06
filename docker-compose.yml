@@ -27,7 +27,7 @@ services:
   client1:
     build: .
     container_name: client1
-    command: ["./cliente", "5500"]
+    command: ["./cliente", "5500" , "< ./tests/RAND_NUM_1.txt"]
     networks:
       - app-net
     stdin_open: true

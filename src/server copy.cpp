@@ -1,33 +1,6 @@
-/**
- *Função responsável por receber números de clientes via socket UDP e processá-los.
- *
- * Esta função cria um socket UDP para receber números enviados por clientes.
- * Ela utiliza múltiplas threads para processar os números recebidos de forma concorrente.
- * Cada número recebido é utilizado para atualizar informações de participantes e uma tabela de soma total.
- * Além disso, uma confirmação é enviada de volta ao cliente após o processamento.
- *
- * @param Request_Port Porta na qual o servidor irá escutar para receber os números.
- *
- * Detalhes do funcionamento:
- * - Um socket é criado e configurado para escutar na porta especificada.
- * - São criadas múltiplas threads para processar os números recebidos.
- * - Cada thread aguarda a recepção de mensagens contendo números.
- * - Ao receber uma mensagem, a função:
- * 1. Atualiza as informações do participante com base no IP do cliente.
- * 2. Atualiza a tabela de soma total com o número recebido.
- * 3. Imprime a lista de participantes.
- * 4. Envia uma mensagem de confirmação de volta ao cliente.
- * - O socket é fechado ao final da execução.
- *
- * Erros possíveis:
- * - Falha na criação do socket.
- * - Falha ao realizar o bind do socket à porta especificada.
- *
- * Nota:
- * - A função utiliza mutexes para garantir a consistência dos dados compartilhados entre threads.
- */
 
- #include "server.h"
+
+ #include "libs/server.h"
  #include <iostream>
  #include <cstring>
  #include <sys/socket.h>
@@ -349,14 +322,6 @@
         struct sockaddr_in from_addr;
         socklen_t from_len = sizeof(from_addr);
         if(recvfrom(this->server_socket, &response, sizeof(response), 0, (struct sockaddr*)&from_addr, &from_len) > 0) {
-            // if (response.type == Type::SERVER_DISCOVERY) {
-            //     lock_guard<mutex> lock(serverListMutex);
-            //     string backup_ip = inet_ntoa(from_addr.sin_addr);
-            //     if(backup_ip != my_ip && !checkList(backup_ip)) {
-            //         server_list.push_back({backup_ip});
-            //         log_with_timestamp("[" + my_ip + "] Backup redescoberto e registrado: " + backup_ip);
-            //     }
-            // }
         }
     }
 

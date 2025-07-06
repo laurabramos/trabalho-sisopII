@@ -1,20 +1,5 @@
-/**
- *  Cria um socket UDP e o configura com as opções especificadas.
- * 
- * Esta função cria um socket UDP e, opcionalmente, o associa a uma porta específica.
- * Também configura o socket para reutilizar o endereço e define um timeout de 1 segundo.
- * 
- * @param port Porta à qual o socket será associado. Se for 0, o socket não será associado a nenhuma porta.
- * @return Retorna o descritor do socket criado em caso de sucesso, ou -1 em caso de erro.
- * 
- * @details
- * - Caso a criação do socket falhe, uma mensagem de erro será exibida e a função retornará -1.
- * - Se uma porta for especificada, a função tentará associar o socket a essa porta.
- * - Em caso de falha ao configurar SO_REUSEADDR ou ao associar o socket, uma mensagem de erro será exibida e o socket será fechado.
- * 
- * @note Certifique-se de fechar o socket retornado quando ele não for mais necessário para evitar vazamentos de recursos.
- */
-#include "nodo.h"
+
+#include "libs/nodo.h"
 #include <netdb.h>
 #include <cstring>
 #include <arpa/inet.h>
@@ -99,7 +84,7 @@ int Nodo::createSocket(int port)
          }
      }
 
-    return sockfd;                 //printf("adkfajjjjjjjjjj");
+    return sockfd;                 
 }
 
 void Nodo::setSocketBroadcastOptions(int sockfd)

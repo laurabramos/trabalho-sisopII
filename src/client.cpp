@@ -1,6 +1,6 @@
-// client.cpp - VERSÃO CORRIGIDA
 
-#include "client.h"
+
+#include "libs/client.h"
 #include <iostream>
 #include <cstring>
 #include <sys/socket.h>
@@ -11,7 +11,7 @@
 #include <cstdint>
 #include <fstream>
 #include <ifaddrs.h>
-#include "nodo.h"
+#include "libs/nodo.h"
 #include <limits>
 #include <string>
 
@@ -31,7 +31,7 @@ Client::~Client() {
     // Vazio
 }
 
-std::string Client::discoverServer(int Discovery_Port, int Request_Port) {
+string Client::discoverServer(int Discovery_Port, int Request_Port) {
     int discoverySocket = createSocket(0);
 
     if (discoverySocket == -1) {
@@ -106,8 +106,6 @@ bool Client::sendNum(const std::string& serverIP, int Request_Port) {
     }
 
     uint32_t num;
-    // uint32_t soma = 0;
-    // uint32_t seq = 1;
 
     cout << "Conectado ao servidor " << serverIP << ". Pode começar a enviar números." << endl;
     cout << "(Use Ctrl+D para finalizar)" << endl;

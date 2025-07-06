@@ -1,33 +1,4 @@
-/**
- *Função responsável por receber números de clientes via socket UDP e processá-los.
- *
- * Esta função cria um socket UDP para receber números enviados por clientes.
- * Ela utiliza múltiplas threads para processar os números recebidos de forma concorrente.
- * Cada número recebido é utilizado para atualizar informações de participantes e uma tabela de soma total.
- * Além disso, uma confirmação é enviada de volta ao cliente após o processamento.
- *
- * @param Request_Port Porta na qual o servidor irá escutar para receber os números.
- *
- * Detalhes do funcionamento:
- * - Um socket é criado e configurado para escutar na porta especificada.
- * - São criadas múltiplas threads para processar os números recebidos.
- * - Cada thread aguarda a recepção de mensagens contendo números.
- * - Ao receber uma mensagem, a função:
- * 1. Atualiza as informações do participante com base no IP do cliente.
- * 2. Atualiza a tabela de soma total com o número recebido.
- * 3. Imprime a lista de participantes.
- * 4. Envia uma mensagem de confirmação de volta ao cliente.
- * - O socket é fechado ao final da execução.
- *
- * Erros possíveis:
- * - Falha na criação do socket.
- * - Falha ao realizar o bind do socket à porta especificada.
- *
- * Nota:
- * - A função utiliza mutexes para garantir a consistência dos dados compartilhados entre threads.
- */
-
-#include "server.h"
+#include "libs/server.h"
 #include <iostream>
 #include <cstring>
 #include <sys/socket.h>
@@ -40,10 +11,10 @@
 #include <bits/stdc++.h>
 #include <vector>
 #include <thread>
+#include <fcntl.h> 
 
 using namespace std;
 
-// Mutex para sincronização da lista de participantes e soma total
 mutex participantsMutex;
 mutex sumMutex;
 mutex serverListMutex;
@@ -58,9 +29,8 @@ void log_with_timestamp(const string &message)
 }
 
 long long int numreqs = 0;
-/*Funções utilizadas */
-
 // --- Construtor e Destrutor ---
+
 Server::Server(int client_port, int req_port, int server_comm_port)
 {
     this->client_discovery_port = client_port;
@@ -84,35 +54,25 @@ Server::~Server()
 // --- Ponto de Entrada Principal (Máquina de Estados) ---
 void Server::start()
 {
-    printInicio();
     findLeaderOrCreateGroup(); // Define o papel inicial
 
-    // Loop principal da máquina de estados do servidor.
-    // Isso permite que um servidor faça a transição de BACKUP para LÍDER
-    // sem que o programa termine.
+    /* Loop principal para a transição de BACKUP para LÍDER */
     while (true)
     {
         if (this->role == ServerRole::LEADER)
         {
-            // Se o papel for LÍDER, executa a lógica do líder.
-            // A função runAsLeader contém seu próprio loop e só retornará
-            // se o líder encontrar um erro e decidir se rebaixar (não implementado).
+            //se lider: 
             runAsLeader();
         }
         else
-        { // this->role == ServerRole::BACKUP
-            // Se o papel for BACKUP, executa a lógica do backup.
-            // A função runAsBackup contém seu próprio loop e retornará
-            // se o papel mudar para LÍDER (após vencer uma eleição).
+        { 
+            // Se o papel for BACKUP.
             runAsBackup();
         }
 
         // Se runAsBackup retornar, significa que uma transição de papel ocorreu
-        // (provavelmente de BACKUP para LÍDER). O loop `while(true)` garante
-        // que o novo papel seja verificado e a função correta (runAsLeader)
-        // seja chamada na próxima iteração.
         log_with_timestamp("[" + my_ip + "] Transição de papel detectada. Reavaliando o estado...");
-        this_thread::sleep_for(chrono::milliseconds(100)); // Pequena pausa para evitar busy-looping
+        this_thread::sleep_for(chrono::milliseconds(100)); // evita busy-looping
     }
 }
 
@@ -135,12 +95,9 @@ void Server::handleClientDiscovery(const struct sockaddr_in &fromAddr)
 void Server::handleServerDiscovery(const struct sockaddr_in &fromAddr)
 {
     string new_server_ip = inet_ntoa(fromAddr.sin_addr);
-    log_with_timestamp("[" + my_ip + "] Recebido pedido de descoberta de SERVIDOR de " + new_server_ip);
-
     const int ACK_ATTEMPTS = 3;
     Message response = {Type::SERVER_DISCOVERY_ACK, 0, 0};
 
-    cout << "[" << my_ip << "] Enviando " << ACK_ATTEMPTS << " respostas de ACK para " << new_server_ip << "..." << endl;
     for (int i = 0; i < ACK_ATTEMPTS; ++i)
     {
         sendto(this->server_socket, &response, sizeof(Message), 0, (struct sockaddr *)&fromAddr, sizeof(fromAddr));
@@ -205,7 +162,6 @@ void Server::handleCoordinatorMessage(const struct sockaddr_in &fromAddr)
     }
 }
 
-// --- Lógica de Inicialização Corrigida e Robusta ---
 void Server::findLeaderOrCreateGroup()
 {
     cout << "[" << my_ip << "] Procurando por um líder na rede..." << endl;
@@ -258,12 +214,10 @@ void Server::findLeaderOrCreateGroup()
     startElection();
 }
 
-// --- Lógica de Eleição Corrigida (Trata Condições de Corrida e Perda de Pacotes) ---
 void Server::startElection()
 {
     if (this->election_in_progress)
     {
-        log_with_timestamp("[" + my_ip + "] Tentativa de iniciar eleição enquanto uma já está em progresso. Ignorando.");
         return;
     }
 
@@ -279,9 +233,9 @@ void Server::startElection()
 
     bool got_objection = false; // Renomeado para maior clareza
     const int ELECTION_TIMEOUT_SEC = 5;
+    log_with_timestamp("[" + my_ip + "] Aguardando respostas por até " + to_string(ELECTION_TIMEOUT_SEC) + " segundos...");
     auto election_start_time = chrono::steady_clock::now();
 
-    log_with_timestamp("[" + my_ip + "] Aguardando respostas por até " + to_string(ELECTION_TIMEOUT_SEC) + " segundos...");
 
     while (chrono::duration_cast<chrono::seconds>(chrono::steady_clock::now() - election_start_time).count() < ELECTION_TIMEOUT_SEC)
     {
@@ -303,18 +257,15 @@ void Server::startElection()
         switch (response.type)
         {
         case Type::OK_ANSWER:
-            log_with_timestamp("[" + my_ip + "] Recebi um OK_ANSWER de " + from_ip + ". Não serei o líder.");
             got_objection = true;
             break;
 
         case Type::ELECTION:
-            log_with_timestamp("[" + my_ip + "] Durante minha eleição, recebi ELECTION de " + from_ip + ".");
 
             if (ipToInt(this->my_ip) > ipToInt(from_ip))
             {
-                log_with_timestamp("[" + my_ip + "] Meu IP é maior. Reenviando rajada de OK_ANSWER para " + from_ip + ".");
                 Message answer_msg = {Type::OK_ANSWER, 0, 0};
-                for (int i = 0; i < 3; ++i)
+                //for (int i = 0; i < 3; ++i)
                 {
                     sendto(this->server_socket, &answer_msg, sizeof(answer_msg), 0, (struct sockaddr *)&from_addr, sizeof(from_addr));
                     this_thread::sleep_for(chrono::milliseconds(20));
@@ -322,13 +273,11 @@ void Server::startElection()
             }
             else
             {
-                log_with_timestamp("[" + my_ip + "] O IP de " + from_ip + " é maior. Desistindo da minha eleição.");
                 got_objection = true;
             }
             break;
 
         case Type::COORDINATOR:
-            log_with_timestamp("[" + my_ip + "] Recebi anúncio de COORDENADOR de " + from_ip + ". Abortando eleição.");
             handleCoordinatorMessage(from_addr);
             // A flag election_in_progress será setada como false dentro de handleCoordinatorMessage
             return; // Encerra a função de eleição
@@ -359,7 +308,7 @@ void Server::startElection()
     }
     else
     {
-        log_with_timestamp("[" + my_ip + "] Processo de eleição encerrado. Outro servidor assumirá.");
+        log_with_timestamp("[" + my_ip + "] Processo de eleição encerrado. ");
     }
 
     this->election_in_progress = false;
@@ -367,8 +316,6 @@ void Server::startElection()
 
 void Server::runAsLeader()
 {
-    log_with_timestamp("[" + my_ip + "] Papel de LÍDER assumido. Iniciando fase de redescoberta de backups...");
-
     // --- FASE DE REDESCOBERTA ---
     serverListMutex.lock();
     server_list.clear();
@@ -386,29 +333,17 @@ void Server::runAsLeader()
         this_thread::sleep_for(chrono::milliseconds(100));
     }
 
-    auto discovery_end_time = chrono::steady_clock::now() + chrono::seconds(3);
+  /*  auto discovery_end_time = chrono::steady_clock::now() + chrono::seconds(3);
     while (chrono::steady_clock::now() < discovery_end_time)
     {
         Message response;
         struct sockaddr_in from_addr;
         socklen_t from_len = sizeof(from_addr);
-        if (recvfrom(this->server_socket, &response, sizeof(response), 0, (struct sockaddr *)&from_addr, &from_len) > 0)
-        {
-            // if (response.type == Type::SERVER_DISCOVERY) {
-            //     lock_guard<mutex> lock(serverListMutex);
-            //     string backup_ip = inet_ntoa(from_addr.sin_addr);
-            //     if(backup_ip != my_ip && !checkList(backup_ip)) {
-            //         server_list.push_back({backup_ip});
-            //         log_with_timestamp("[" + my_ip + "] Backup redescoberto e registrado: " + backup_ip);
-            //     }
-            // }
-        }
+        recvfrom(this->server_socket, &response, sizeof(response), 0, (struct sockaddr *)&from_addr, &from_len);
     }
-
+*/
     // --- FASE DE OPERAÇÃO ---
     // Em vez de um loop com select, agora o líder apenas gerencia threads dedicadas.
-    log_with_timestamp("[" + my_ip + "] Fase de redescoberta concluída. Iniciando threads de operação.");
-
     thread server_listener_thread(&Server::listenForServerMessages, this);
     thread client_listener_thread(&Server::listenForClientMessages, this);
     thread client_comm_thread(&Server::receiveNumbers, this);
@@ -421,9 +356,7 @@ void Server::runAsLeader()
         this_thread::sleep_for(chrono::seconds(1));
     }
 
-    // Se o papel mudar, o ideal seria ter um mecanismo para sinalizar
-    // o encerramento das threads. Para manter a simplicidade, elas
-    // terminarão quando a condição `this->role == ServerRole::LEADER` falhar.
+    // terminam quando a condição `this->role == ServerRole::LEADER` falhar.
     server_listener_thread.join();
     client_listener_thread.join();
     client_comm_thread.join();
@@ -450,7 +383,6 @@ void Server::listenForServerMessages()
 
             case Type::ELECTION:
             {
-                log_with_timestamp("[" + my_ip + "] Recebi um desafio de ELECTION enquanto sou LÍDER. Reafirmando liderança com uma mensagem COORDINATOR.");
                 Message response_msg = {Type::COORDINATOR, 0, 0};
                 sendto(this->server_socket, &response_msg, sizeof(response_msg), 0, (struct sockaddr *)&from_addr, sizeof(from_addr));
             }
@@ -463,10 +395,8 @@ void Server::listenForServerMessages()
                 if (!checkList(backup_ip))
                 {
                     server_list.push_back({backup_ip});
-                    log_with_timestamp("[" + my_ip + "] Backup descoberto implicitamente via ARE_YOU_ALIVE: " + backup_ip);
                 }
 
-                log_with_timestamp("[" + my_ip + "] Recebido desafio ARE_YOU_ALIVE. Respondendo I_AM_ALIVE.");
                 Message response_msg = {Type::I_AM_ALIVE, 0, 0};
                 sendto(this->server_socket, &response_msg, sizeof(response_msg), 0, (struct sockaddr *)&from_addr, sizeof(from_addr));
             }
@@ -477,12 +407,10 @@ void Server::listenForServerMessages()
             }
         }
     }
-    log_with_timestamp("[" + my_ip + "] Thread de escuta de SERVIDORES encerrada.");
 }
 
 void Server::listenForClientMessages()
 {
-    log_with_timestamp("[" + my_ip + "] Thread de escuta de CLIENTES iniciada.");
 
     // Cria um socket dedicado para esta thread
     this->client_socket = createSocket(this->client_discovery_port);
@@ -509,7 +437,6 @@ void Server::listenForClientMessages()
     }
     close(this->client_socket);
     this->client_socket = -1;
-    log_with_timestamp("[" + my_ip + "] Thread de escuta de CLIENTES encerrada.");
 }
 
 void Server::sendHeartbeats()
@@ -540,8 +467,8 @@ void Server::sendHeartbeats()
 void Server::checkForLeaderFailure()
 {
     this->last_heartbeat_time = chrono::steady_clock::now();
-    const int HEARTBEAT_TIMEOUT = 5; // Tempo sem heartbeat para iniciar um desafio
-    const int CHALLENGE_TIMEOUT = 2; // Tempo para esperar a resposta do desafio
+    const int HEARTBEAT_TIMEOUT = 10; // Tempo sem heartbeat para iniciar um desafio
+    const int CHALLENGE_TIMEOUT = 4; // Tempo para esperar a resposta do desafio
 
     while (this->role == ServerRole::BACKUP)
     {
@@ -558,7 +485,6 @@ void Server::checkForLeaderFailure()
         // Se o timeout do heartbeat foi atingido, DESAFIE o líder
         if (time_since_last_hb > HEARTBEAT_TIMEOUT)
         {
-            log_with_timestamp("[" + my_ip + "] Silêncio do líder detectado. Desafiando com ARE_YOU_ALIVE...");
 
             // Envia uma mensagem direta de desafio ao líder
             struct sockaddr_in leader_addr = {};
@@ -576,12 +502,10 @@ void Server::checkForLeaderFailure()
             auto time_after_challenge = chrono::duration_cast<chrono::seconds>(chrono::steady_clock::now() - last_heartbeat_time).count();
             if (time_after_challenge > HEARTBEAT_TIMEOUT)
             {
-                log_with_timestamp("[" + my_ip + "] Líder não respondeu ao desafio. Iniciando eleição...");
                 startElection();
             }
             else
             {
-                log_with_timestamp("[" + my_ip + "] Líder respondeu ao desafio. Está tudo bem.");
             }
         }
     }
@@ -597,7 +521,6 @@ void Server::receiveNumbers() {
     int numSocket = createSocket(this->client_request_port);
     if (numSocket == -1) return;
     
-    log_with_timestamp("["+my_ip+"] Thread de processamento de pedidos iniciada.");
 
     while (this->role == ServerRole::LEADER) {
         Message number;
@@ -620,11 +543,11 @@ void Server::receiveNumbers() {
                     if (p.address == clientIP) {
                         confirmation.total_sum = p.last_sum;
                         confirmation.total_reqs = p.last_req;
+                        sendto(numSocket, &confirmation, sizeof(Message), 0, (struct sockaddr *)&clientAddr, clientLen);
                         break;
                     }
                 }
             } else {
-                // --- INÍCIO DA OTIMIZAÇÃO ---
                 // 1. Atualiza o participante e obtém o estado mais recente de volta numa só operação
                 tableClient clientState = updateParticipant(clientIP, number.seq, number.num);
                 
@@ -637,22 +560,15 @@ void Server::receiveNumbers() {
                 // 4. Preenche a confirmação com o estado individual do cliente que foi retornado
                 confirmation.total_sum = clientState.last_sum;
                 confirmation.total_reqs = clientState.last_req;
-                // --- FIM DA OTIMIZAÇÃO ---
+                sendto(numSocket, &confirmation, sizeof(Message), 0, (struct sockaddr *)&clientAddr, clientLen);
 
-                log_with_timestamp("[" + my_ip + "] Pedido processado. Iniciando replicação...");
-                bool replicated = replicateToBackups(number, clientAddr);
-                if (!replicated) {
-                    log_with_timestamp("[" + my_ip + "] AVISO: Replicação falhou ou expirou.");
-                } else {
-                    log_with_timestamp("[" + my_ip + "] Replicação concluída.");
-                }
+                replicateToBackups(number, clientAddr);
+                
             }
             
-            sendto(numSocket, &confirmation, sizeof(Message), 0, (struct sockaddr *)&clientAddr, clientLen);
         }
     }
     close(numSocket);
-    log_with_timestamp("["+my_ip+"] Thread de processamento de pedidos encerrada.");
 }
 
 // Função para gerir a replicação passiva (com mais logs para depuração)
@@ -661,7 +577,6 @@ bool Server::replicateToBackups(const Message &client_request, const struct sock
     lock_guard<mutex> lock(serverListMutex);
     if (server_list.empty())
     {
-        log_with_timestamp("[" + my_ip + "] Nenhum backup para replicar.");
         return true;
     }
 
@@ -674,39 +589,33 @@ bool Server::replicateToBackups(const Message &client_request, const struct sock
 
     for (const auto &backup_info : server_list)
     {
-        // --- ADIÇÃO PARA DEBUG ---
-        log_with_timestamp("[" + my_ip + "] [LEADER] Replicando pedido seq=" + to_string(replication_msg.seq) + " para o backup " + backup_info.ip_address);
-        // --- FIM DEBUG ---
-
         struct sockaddr_in dest_addr = {};
         dest_addr.sin_family = AF_INET;
         dest_addr.sin_port = htons(this->server_communication_port);
         dest_addr.sin_addr.s_addr = inet_addr(backup_info.ip_address.c_str());
         sendto(this->server_socket, &replication_msg, sizeof(replication_msg), 0, (struct sockaddr *)&dest_addr, sizeof(dest_addr));
     }
+    //todo verificar tempo d timeout
+    int flags = fcntl(this->server_socket, F_GETFL, 0);
+    fcntl(this->server_socket, F_SETFL, flags | O_NONBLOCK); // Torna o socket não bloqueante
+    auto end_time = chrono::steady_clock::now() + chrono::seconds(2); 
 
-    thread ack_listener([&]()
-                        {
-        auto end_time = chrono::steady_clock::now() + chrono::seconds(2); 
-        log_with_timestamp("[" + my_ip + "] [LEADER] Aguardando " + to_string(backups_count) + " ACKs de replicação...");
-
-        while(chrono::steady_clock::now() < end_time && acks_received < backups_count) {
-            Message response;
-            struct sockaddr_in from_addr;
-            socklen_t from_len = sizeof(from_addr);
-
-            if(recvfrom(this->server_socket, &response, sizeof(response), 0, (struct sockaddr*)&from_addr, &from_len) > 0) {
-                if (response.type == Type::REPLICATION_ACK && response.seq == client_request.seq) {
-                    acks_received++;
-                    // --- ADIÇÃO PARA DEBUG ---
-                    log_with_timestamp("[" + my_ip + "] [LEADER] Recebido REPLICATION_ACK de " + string(inet_ntoa(from_addr.sin_addr)) + " (total: " + to_string(acks_received.load()) + "/" + to_string(backups_count) + ")");
-                    // --- FIM DEBUG ---
-                }
+    while(chrono::steady_clock::now() < end_time && acks_received < backups_count) {
+        Message response;
+        struct sockaddr_in from_addr;
+        socklen_t from_len = sizeof(from_addr);
+        auto received = recvfrom(this->server_socket, &response, sizeof(response), 0, (struct sockaddr*)&from_addr, &from_len);
+        if(received > 0) {
+            if (response.type == Type::REPLICATION_ACK && response.seq == replication_msg.seq) {
+                acks_received++;
+        
             }
-        } });
-
-    ack_listener.join();
-
+        }
+        else if (received == -1 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
+            this_thread::sleep_for(std::chrono::milliseconds(10)); // Pequeno sleep para não queimar CPU
+        }
+    }
+    fcntl(this->server_socket, F_SETFL, flags);
     return acks_received == backups_count;
 }
 
@@ -726,18 +635,22 @@ void Server::runAsBackup()
         if (received > 0)
         {
             string from_ip = inet_ntoa(from_addr.sin_addr);
+            if (from_ip == this->leader_ip)
+            {
+                this->last_heartbeat_time = chrono::steady_clock::now();
+            }
             switch (msg.type)
             {
             case Type::HEARTBEAT:
             case Type::I_AM_ALIVE:
-                if (from_ip == this->leader_ip)
-                {
-                    this->last_heartbeat_time = chrono::steady_clock::now();
-                }
                 break;
             case Type::REPLICATION_UPDATE:
                 if (from_ip == this->leader_ip)
                 {
+                    // Envia confirmação de volta ao líder
+                    Message ack_msg = {Type::REPLICATION_ACK, 0, msg.seq};
+                    sendto(server_socket, &ack_msg, sizeof(ack_msg), 0, (struct sockaddr *)&from_addr, from_len);
+
                     struct in_addr original_client_addr;
                     original_client_addr.s_addr = msg.ip_addr;
                     string client_ip_str = inet_ntoa(original_client_addr);
@@ -749,10 +662,7 @@ void Server::runAsBackup()
 
                     // Imprime o estado atualizado do backup para confirmar a replicação.
                     printParticipants(client_ip_str);
-
-                    // Envia confirmação de volta ao líder
-                    Message ack_msg = {Type::REPLICATION_ACK, 0, msg.seq};
-                    sendto(server_socket, &ack_msg, sizeof(ack_msg), 0, (struct sockaddr *)&from_addr, from_len);
+                    
                 }
                 break;
             case Type::ELECTION:

@@ -1,4 +1,3 @@
-// client.h - VERSÃO CORRIGIDA
 #ifndef CLIENT_H
 #define CLIENT_H
 
@@ -16,7 +15,6 @@ public:
     bool sendNum(const std::string& serverIP, int Request_Port);
 
 private:
-    //int clientSocketBroad;
     int clientSocketUni;
     struct sockaddr_in broadcastAddr;
 
