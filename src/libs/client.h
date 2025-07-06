@@ -5,6 +5,7 @@
 #include <netinet/in.h>
 #include <cstdint>
 #include <string> 
+#include <queue> 
 
 class Client : public Nodo {
 public:
@@ -19,6 +20,7 @@ private:
     struct sockaddr_in broadcastAddr;
 
     uint32_t current_seq = 1; 
+    std::queue<uint32_t> unacked_nums; 
 };
 
 #endif

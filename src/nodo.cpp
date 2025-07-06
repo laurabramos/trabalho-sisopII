@@ -27,7 +27,6 @@ string Nodo::getHostname() {
 string Nodo::getIP() {
     string hostname = getHostname();
 
-    //isso eh o tipo struct addrinfo hints tipo conexao
     struct addrinfo hints{}, *info, *p;
     hints.ai_family = AF_INET; 
     hints.ai_socktype = SOCK_STREAM;
@@ -41,7 +40,7 @@ string Nodo::getIP() {
     for (p = info; p != nullptr; p = p->ai_next) {
         struct sockaddr_in *addr = (struct sockaddr_in *)p->ai_addr;
         ipAddress = inet_ntoa(addr->sin_addr);
-        break; // Pega o primeiro IP disponível
+        break; 
     }
 
     freeaddrinfo(info);
@@ -58,7 +57,7 @@ int Nodo::createSocket(int port)
         return -1;
     }
 
-     setSocketTimeout(sockfd, 1); // Timeout de 1 segundo
+     setSocketTimeout(sockfd, 1); 
 
      if (port != 0)
      {

@@ -40,10 +40,14 @@ struct Message {
     Type type;
     uint32_t num;
     uint32_t seq;
-    // Campo extra para carregar um IP, útil em mensagens de eleição/coordenação
     uint32_t ip_addr; 
-    uint64_t total_sum;
-    uint32_t total_reqs;
+
+    uint64_t total_sum;     
+    uint32_t total_reqs;     
+
+    
+    uint64_t total_sum_server; 
+    uint32_t total_reqs_server; 
 };
 #pragma pack(pop)
 
@@ -51,7 +55,7 @@ struct Message {
 struct tableClient {
     std::string address;
     uint32_t last_req;
-    uint32_t last_sum;
+    uint64_t last_sum;
     uint32_t last_value;
 };
 
