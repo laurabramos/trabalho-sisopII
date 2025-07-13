@@ -52,15 +52,15 @@ echo ""
 echo "[PASSO 2] Subindo servidores com um intervalo de 2 segundos..."
 echo "   - Subindo 'server1'..."
 docker compose up -d server1
-sleep 5
+#sleep 5
 
 echo "   - Subindo 'server2'..."
 docker compose up -d server2
-sleep 5
+#sleep 5
 
 echo "   - Subindo 'server3'..."
 docker compose up -d server3
-sleep 5
+#sleep 5
 
 echo "   - Subindo 'server4'..."
 docker compose up -d server4

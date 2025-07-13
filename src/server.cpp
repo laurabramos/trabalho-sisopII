@@ -86,30 +86,23 @@ void Server::handleClientDiscovery(const struct sockaddr_in &fromAddr)
 
 void Server::handleServerDiscovery(const struct sockaddr_in &fromAddr)
 {
+    log_with_timestamp("[" + my_ip + "] Recebi uma mensagem de SERVER_DISCOVERY de " + inet_ntoa(fromAddr.sin_addr));
     string new_server_ip = inet_ntoa(fromAddr.sin_addr);
     const int ACK_ATTEMPTS = 3;
     Message response = {Type::SERVER_DISCOVERY_ACK, 0, 0};
 
     for (int i = 0; i < ACK_ATTEMPTS; ++i)
     {
+        log_with_timestamp("[" + my_ip + "] Enviando SERVER_DISCOVERY_ACK para " + new_server_ip);
         sendto(this->server_socket, &response, sizeof(Message), 0, (struct sockaddr *)&fromAddr, sizeof(fromAddr));
         this_thread::sleep_for(chrono::milliseconds(50));
     }
 
     lock_guard<mutex> lock(serverListMutex);
-    bool exists = false;
-    for (const auto &s : server_list)
-    {
-        if (s.ip_address == new_server_ip)
-        {
-            exists = true;
-            break;
-        }
-    }
-    if (!exists)
+    if (!checkList(new_server_ip))
     {
         server_list.push_back({new_server_ip});
-        cout << "[" << my_ip << "] Servidor " << new_server_ip << " adicionado à lista de backups." << endl;
+        log_with_timestamp("[" + my_ip + "] Servidor " + new_server_ip + " adicionado à lista de backups.");
     }
 }
 
@@ -142,6 +135,7 @@ void Server::handleElectionMessage(const struct sockaddr_in &fromAddr)
 
 void Server::handleCoordinatorMessage(const struct sockaddr_in &fromAddr)
 {
+    log_with_timestamp("[" + my_ip + "] Recebi uma mensagem de COORDINATOR de " + inet_ntoa(fromAddr.sin_addr));
     this->leader_ip = inet_ntoa(fromAddr.sin_addr);
     this->election_in_progress = false;
     this->last_heartbeat_time = chrono::steady_clock::now();
@@ -163,7 +157,7 @@ void Server::findLeaderOrCreateGroup()
         exit(1);
     }
     setSocketBroadcastOptions(this->server_socket);
-    setSocketTimeout(this->server_socket, 1);
+    setSocketTimeout(this->server_socket, 2);
 
     const int DISCOVERY_DURATION_SEC = 5;
     auto discovery_start_time = chrono::steady_clock::now();
@@ -177,30 +171,32 @@ void Server::findLeaderOrCreateGroup()
 
     while (chrono::duration_cast<chrono::seconds>(chrono::steady_clock::now() - discovery_start_time).count() < DISCOVERY_DURATION_SEC)
     {
+        this_thread::sleep_for(chrono::milliseconds(100));
+        log_with_timestamp("[" + my_ip + "] Enviando mensagem de descoberta de servidor...");
         sendto(this->server_socket, &discovery_msg, sizeof(discovery_msg), 0, (struct sockaddr *)&broadcast_addr, sizeof(broadcast_addr));
 
         Message response;
         struct sockaddr_in from_addr;
         socklen_t from_len = sizeof(from_addr);
         int received = recvfrom(this->server_socket, &response, sizeof(response), 0, (struct sockaddr *)&from_addr, &from_len);
-
+        log_with_timestamp("[" + my_ip + "] Recebido " + to_string(received) + " bytes de resposta.");
+        
         if (received > 0)
         {
             string from_ip = inet_ntoa(from_addr.sin_addr);
             if (from_ip == my_ip)
-                continue;
-
+            continue;
+            
             if (response.type == Type::SERVER_DISCOVERY_ACK)
             {
                 this->leader_ip = from_ip;
                 this->role = ServerRole::BACKUP;
-                cout << "[" << my_ip << "] Líder existente encontrado em " << this->leader_ip << ". Tornando-me BACKUP." << endl;
+                log_with_timestamp("[" + my_ip + "] Líder existente encontrado em " + this->leader_ip + ". Tornando-me BACKUP.");
                 return;
             }
         }
-        this_thread::sleep_for(chrono::milliseconds(100));
     }
-
+    log_with_timestamp("[" + my_ip + "] Nenhum líder encontrado. Iniciando processo de eleição.");
     startElection();
 }
 
@@ -302,6 +298,7 @@ void Server::startElection()
 
 void Server::runAsLeader()
 {
+    cout << "EU SOU O LÍDER PORRAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA" << endl;
     
     serverListMutex.lock();
     server_list.clear();
@@ -323,7 +320,7 @@ void Server::runAsLeader()
     thread server_listener_thread(&Server::listenForServerMessages, this);
     thread client_listener_thread(&Server::listenForClientMessages, this);
     thread client_comm_thread(&Server::receiveNumbers, this);
-    thread heartbeat_thread(&Server::sendHeartbeats, this);
+    //thread heartbeat_thread(&Server::sendHeartbeats, this);
 
     while (this->role == ServerRole::LEADER)
     {
@@ -333,7 +330,7 @@ void Server::runAsLeader()
     server_listener_thread.join();
     client_listener_thread.join();
     client_comm_thread.join();
-    heartbeat_thread.join();
+    //heartbeat_thread.join();
 }
 
 void Server::listenForServerMessages()
@@ -348,7 +345,7 @@ void Server::listenForServerMessages()
         {
             switch (msg.type)
             {
-            case Type::SERVER_DISCOVERY:
+            case Type::SERVER_DISCOVERY:            
                 handleServerDiscovery(from_addr);
                 break;
 
@@ -436,13 +433,11 @@ void Server::sendHeartbeats()
 void Server::checkForLeaderFailure()
 {
     this->last_heartbeat_time = chrono::steady_clock::now();
-    const int HEARTBEAT_TIMEOUT = 10; // Tempo sem heartbeat para iniciar um desafio
-    const int CHALLENGE_TIMEOUT = 4; // Tempo para esperar a resposta do desafio
+    const int HEARTBEAT_TIMEOUT = 2; // Tempo sem heartbeat para iniciar um desafio
+    const int CHALLENGE_TIMEOUT = 1; // Tempo para esperar a resposta do desafio
 
     while (this->role == ServerRole::BACKUP)
     {
-        this_thread::sleep_for(chrono::seconds(1));
-
         if (this->election_in_progress)
         {
             continue;
@@ -468,9 +463,8 @@ void Server::checkForLeaderFailure()
             {
                 startElection();
             }
-            else
-            {
-            }
+
+            this_thread::sleep_for(chrono::milliseconds(100));
         }
     }
 }
@@ -551,7 +545,7 @@ bool Server::replicateToBackups(const Message& client_request, const struct sock
         dest_addr.sin_addr.s_addr = inet_addr(backup_info.ip_address.c_str());
 
         bool ack_received = false;
-        const int MAX_ATTEMPTS = 3; 
+        const int MAX_ATTEMPTS = 1; 
 
         for (int attempt = 0; attempt < MAX_ATTEMPTS && !ack_received; ++attempt) {
             sendto(this->server_socket, &replication_msg, sizeof(replication_msg), 0, (struct sockaddr *)&dest_addr, sizeof(dest_addr));
@@ -719,15 +713,29 @@ bool Server::isDuplicateRequest(const string &clientIP, uint32_t seq)
 
 bool Server::checkList(const std::string &ip)
 {
-    for (const auto &participant : participants)
+    // std::cout << "[DEBUG] Verificando IP: " << ip << std::endl;
+    // std::cout << "[DEBUG] Lista de SERVERS:" << std::endl;
+
+    // // Primeiro, imprime toda a lista
+    // for (const auto &backup : server_list)
+    // {
+    //     std::cout << " - " << backup.ip_address << std::endl;
+    // }
+
+    // Agora, verifica se o IP está na lista
+    for (const auto &backup : server_list)
     {
-        if (participant.address == ip)
+        if (backup.ip_address == ip)
         {
+            // std::cout << "[DEBUG] IP encontrado na lista." << std::endl;
             return true;
         }
     }
+
+    // std::cout << "[DEBUG] IP não encontrado na lista." << std::endl;
     return false;
 }
+
 
 tableClient Server::updateParticipant(const string &clientIP, uint32_t seq, uint32_t num)
 {
