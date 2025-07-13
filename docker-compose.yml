@@ -12,8 +12,6 @@ services:
     command: ["./servidor", "5500"]
     networks:
       - app-net
-    # depends_on:
-    #   - server1
 
   server3:
     build: .
@@ -21,8 +19,13 @@ services:
     command: ["./servidor", "5500"]
     networks:
       - app-net
-    # depends_on:
-    #   - server1
+
+  server4:
+    build: .
+    container_name: server4
+    command: ["./servidor", "5500"]
+    networks:
+      - app-net
   
   client1:
     build: .
@@ -31,8 +34,6 @@ services:
     networks:
       - app-net
     stdin_open: true
-    # depends_on:
-    #   - server1
 
   client2:
     build: .
@@ -41,8 +42,14 @@ services:
     networks:
       - app-net
     stdin_open: true
-    # depends_on:
-    #   - server1    
+
+  client3:
+    build: .
+    container_name: client3
+    command: ["./cliente", "5500"]
+    networks:
+      - app-net
+    stdin_open: true    
 
 networks:
   app-net:

@@ -65,7 +65,7 @@ void Server::start()
             runAsBackup();
         }
 
-        //log_with_timestamp("[" + my_ip + "] Transição de papel detectada. Reavaliando o estado...");
+        log_with_timestamp("[" + my_ip + "] Transição de papel detectada. Reavaliando o estado...");
         this_thread::sleep_for(chrono::milliseconds(100)); 
     }
 }
@@ -123,11 +123,11 @@ uint32_t ipToInt(const std::string &ipStr)
 void Server::handleElectionMessage(const struct sockaddr_in &fromAddr)
 {
     string challenger_ip = inet_ntoa(fromAddr.sin_addr);
-    //log_with_timestamp("[" + my_ip + "] Recebi uma mensagem de ELECTION de " + challenger_ip);
+    log_with_timestamp("[" + my_ip + "] Recebi uma mensagem de ELECTION de " + challenger_ip);
 
     if (ipToInt(this->my_ip) > ipToInt(challenger_ip))
     {
-        //log_with_timestamp("[" + my_ip + "] Meu IP é maior. Enviando rajada de OK_ANSWER e iniciando minha eleição.");
+        log_with_timestamp("[" + my_ip + "] Meu IP é maior. Enviando rajada de OK_ANSWER e iniciando minha eleição.");
         Message answer_msg = {Type::OK_ANSWER, 0, 0};
 
         for (int i = 0; i < 3; ++i)
@@ -198,6 +198,7 @@ void Server::findLeaderOrCreateGroup()
                 return;
             }
         }
+        this_thread::sleep_for(chrono::milliseconds(100));
     }
 
     startElection();
@@ -293,7 +294,7 @@ void Server::startElection()
     }
     else
     {
-        //log_with_timestamp("[" + my_ip + "] Processo de eleição encerrado. ");
+        log_with_timestamp("[" + my_ip + "] Processo de eleição encerrado. ");
     }
 
     this->election_in_progress = false;
@@ -385,7 +386,7 @@ void Server::listenForClientMessages()
     this->client_socket = createSocket(this->client_discovery_port);
     if (this->client_socket == -1)
     {
-        //log_with_timestamp("[" + my_ip + "] LEADER: Falha ao criar socket de descoberta de cliente. Thread de escuta encerrando.");
+        log_with_timestamp("[" + my_ip + "] LEADER: Falha ao criar socket de descoberta de cliente. Thread de escuta encerrando.");
         return;
     }
 
@@ -523,14 +524,14 @@ bool Server::replicateToBackups(const Message& client_request, const struct sock
     {
         lock_guard<mutex> lock(serverListMutex);
         if (server_list.empty()) {
-            //cout << "nao tem ninguém" << endl;
+            cout << "nao tem ninguém" << endl;
             return true; // Sucesso, pois não há backups para replicar.
         }
-        //cout << "tem alguem hehehe" << endl;
+        cout << "tem alguem hehehe" << endl;
         backups_to_notify = this->server_list;
     }
 
-    ////log_with_timestamp("[" + my_ip + "] [LEADER] Iniciando replicação síncrona, um por um, para " + to_string(backups_to_notify.size()) + " backup(s)...");
+    log_with_timestamp("[" + my_ip + "] [LEADER] Iniciando replicação síncrona, um por um, para " + to_string(backups_to_notify.size()) + " backup(s)...");
     Message replication_msg = client_request;
     replication_msg.type = Type::REPLICATION_UPDATE;
     replication_msg.ip_addr = client_addr.sin_addr.s_addr;
@@ -542,7 +543,7 @@ bool Server::replicateToBackups(const Message& client_request, const struct sock
 
     int successful_acks = 0;
     for (const auto& backup_info : backups_to_notify) {
-        ////log_with_timestamp("[" + my_ip + "] [LEADER] Replicando para o backup " + backup_info.ip_address + "...");
+        log_with_timestamp("[" + my_ip + "] [LEADER] Replicando para o backup " + backup_info.ip_address + "...");
 
         struct sockaddr_in dest_addr = {};
         dest_addr.sin_family = AF_INET;
@@ -568,20 +569,20 @@ bool Server::replicateToBackups(const Message& client_request, const struct sock
                 }
             } else {
                 // recvfrom retornou -1 (timeout) ou erro
-                ////log_with_timestamp("[" + my_ip + "] [LEADER] AVISO: Timeout esperando ACK de " + backup_info.ip_address + " (tentativa " + to_string(attempt + 1) + ")");
+                log_with_timestamp("[" + my_ip + "] [LEADER] AVISO: Timeout esperando ACK de " + backup_info.ip_address + " (tentativa " + to_string(attempt + 1) + ")");
             }
         }
 
         if (ack_received) {
             successful_acks++;
-            ////log_with_timestamp("[" + my_ip + "] [LEADER] ACK recebido de " + backup_info.ip_address);
+            log_with_timestamp("[" + my_ip + "] [LEADER] ACK recebido de " + backup_info.ip_address);
         } else {
-            ////log_with_timestamp("[" + my_ip + "] [LEADER] ERRO: Backup " + backup_info.ip_address + " não respondeu após " + to_string(MAX_ATTEMPTS) + " tentativas. Pode estar offline.");
+            log_with_timestamp("[" + my_ip + "] [LEADER] ERRO: Backup " + backup_info.ip_address + " não respondeu após " + to_string(MAX_ATTEMPTS) + " tentativas. Pode estar offline.");
         }
     } 
     setSocketTimeout(this->server_socket, 0);
 
-    ////log_with_timestamp("[" + my_ip + "] [LEADER] Replicação concluída. Sucesso para " + to_string(successful_acks) + "/" + to_string(backups_to_notify.size()) + " backups.");
+    log_with_timestamp("[" + my_ip + "] [LEADER] Replicação concluída. Sucesso para " + to_string(successful_acks) + "/" + to_string(backups_to_notify.size()) + " backups.");
 
     return true; 
 }
@@ -603,7 +604,7 @@ void Server::setParticipantState(const std::string& clientIP, uint32_t seq, uint
 void Server::runAsBackup()
 {
     thread failure_detection_thread(&Server::checkForLeaderFailure, this);
-    //log_with_timestamp("[" + my_ip + "] Papel de BACKUP assumido. Aguardando mensagens do líder (" + this->leader_ip + ").");
+    log_with_timestamp("[" + my_ip + "] Papel de BACKUP assumido. Aguardando mensagens do líder (" + this->leader_ip + ").");
 
     while (this->role == ServerRole::BACKUP)
     {

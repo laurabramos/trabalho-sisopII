@@ -48,9 +48,26 @@ docker compose down --volumes
 docker compose build --no-cache
 
 # 2. Iniciar 2 servidores e 2 clientes
-echo "[PASSO 2] Subindo 'server1', 'server2', 'client1' e 'client2'..."
+echo ""
+echo "[PASSO 2] Subindo servidores com um intervalo de 2 segundos..."
+echo "   - Subindo 'server1'..."
+docker compose up -d server1
+sleep 5
+
+echo "   - Subindo 'server2'..."
+docker compose up -d server2
+sleep 5
+
+echo "   - Subindo 'server3'..."
+docker compose up -d server3
+sleep 5
+
+echo "   - Subindo 'server4'..."
+docker compose up -d server4
+
+echo "[PASSO 2] Subindo 'client1' e 'client2'..."
 # Usamos o `docker-compose.yml` que já tem os 3 servidores, mas só iniciamos os 2 primeiros.
-docker compose up -d server1 server2 client1 client2
+docker compose up -d client1 client2
 
 # 3. Abrir logs
 echo "[PASSO 3] Abrindo janelas de log para todos os serviços..."
