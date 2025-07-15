@@ -351,13 +351,12 @@ void Server::checkForLeaderFailure() {
 void Server::runAsBackup() {
     log_with_timestamp("[" + my_ip + "] Atuando como BACKUP. Líder: " + this->leader_ip);
     thread failure_detection_thread(&Server::checkForLeaderFailure, this);
-    setSocketTimeout(this->server_socket, 0); // Espera bloqueante por mensagens
+    setSocketTimeout(this->server_socket, 0);
 
     while (this->role == ServerRole::BACKUP) {
         Message msg;
         struct sockaddr_in from_addr;
         socklen_t from_len = sizeof(from_addr);
-
         if (recvfrom(server_socket, &msg, sizeof(msg), 0, (struct sockaddr *)&from_addr, &from_len) > 0) {
             string from_ip = inet_ntoa(from_addr.sin_addr);
 
@@ -370,9 +369,29 @@ void Server::runAsBackup() {
                         this->last_heartbeat_time = chrono::steady_clock::now();
                      }
                      break;
+                // ======================================================================
+                // CORREÇÃO #2: Implementar o case de REPLICATION_UPDATE
+                // ======================================================================
                 case Type::REPLICATION_UPDATE:
-                     // Sua lógica de replicação aqui...
-                     break;
+                    if (from_ip == this->leader_ip) {
+                        log_with_timestamp("[" + my_ip + "] Recebi REPLICATION_UPDATE do líder.");
+                        
+                        // Atualiza o estado interno
+                        struct in_addr original_client_addr;
+                        original_client_addr.s_addr = msg.ip_addr;
+                        string client_ip_str = inet_ntoa(original_client_addr);
+                        setParticipantState(client_ip_str, msg.seq, msg.num, msg.total_sum, msg.total_reqs);
+                        {
+                            lock_guard<mutex> lock_sum(sumMutex);
+                            this->sumTotal.sum = msg.total_sum_server;
+                            this->sumTotal.num_reqs = msg.total_reqs_server;
+                        }
+                        
+                        // Envia o ACK de volta para o líder
+                        Message ack_msg = {Type::REPLICATION_ACK, 0, msg.seq};
+                        sendto(server_socket, &ack_msg, sizeof(ack_msg), 0, (struct sockaddr *)&from_addr, from_len);
+                    }
+                    break;
                 case Type::ELECTION:
                     handleElectionMessage(from_addr);
                     break;
