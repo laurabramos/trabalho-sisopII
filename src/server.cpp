@@ -154,17 +154,21 @@ void Server::runAsLeader() {
 
 void Server::runAsBackup() {
     log_with_timestamp("--- MODO BACKUP ATIVADO. Líder: " + this->leader_ip + " ---");
-    
+
+    // Inicializa o timestamp para a verificação de falha
+    last_heartbeat_time = chrono::steady_clock::now();
+
     thread failure_detection_thread(&Server::checkForLeaderFailure, this);
-    
+    // ============= NOVA THREAD PARA ESCUTAR HEARTBEATS =============
+    thread backup_listener_thread(&Server::listenForBackupMessages, this);
+    // ==============================================================
+
     while (role == ServerRole::BACKUP) {
-        // A lógica principal do backup é apenas deixar a thread de deteção de falha trabalhar.
-        // Mensagens como replicação serão tratadas na thread `receiveNumbers`.
-        // Podemos adicionar escuta para outros eventos aqui se necessário.
         this_thread::sleep_for(chrono::seconds(1));
     }
-    
+
     failure_detection_thread.join();
+    backup_listener_thread.join(); // Garante que a thread termine
 }
 
 
