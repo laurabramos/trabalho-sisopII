@@ -46,6 +46,7 @@ private:
 
     // Threads e Handlers
     void sendHeartbeats();
+    void listenForBackupMessages();
     void checkForLeaderFailure();
     void listenForServerMessages();
     void receiveNumbers();
