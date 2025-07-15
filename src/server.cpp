@@ -265,10 +265,29 @@ void Server::listenForServerMessages() {
                 case Type::SERVER_DISCOVERY:   
                     handleServerDiscovery(from_addr);
                     break;
+                
+                // ======================================================================
+                // CORREÇÃO FINAL: LÍDER DEVE CEDER A UM VALENTÃO MAIOR
+                // ======================================================================
                 case Type::ELECTION: {
-                    log_with_timestamp("["+my_ip+"] Recebi ELECTION de "+from_ip+", respondendo que sou o líder.");
-                    Message response_msg = {Type::COORDINATOR, 0, 0};
-                    sendto(this->server_socket, &response_msg, sizeof(response_msg), 0, (struct sockaddr *)&from_addr, sizeof(from_addr));
+                    log_with_timestamp("[" + my_ip + "] [LÍDER] Recebi ELECTION de " + from_ip);
+                    if (ipToInt(this->my_ip) < ipToInt(from_ip)) {
+                        // O desafiante tem um IP maior. Eu perdi.
+                        log_with_timestamp("[" + my_ip + "] O desafiante é maior. Cedendo liderança.");
+                        
+                        // Envia OK para o desafiante
+                        Message answer_msg = {Type::OK_ANSWER, 0, 0};
+                        sendto(this->server_socket, &answer_msg, sizeof(answer_msg), 0, (struct sockaddr *)&from_addr, sizeof(from_addr));
+                        
+                        // Torna-se um backup e sai do modo líder
+                        this->role = ServerRole::BACKUP;
+                        this->current_state = ServerState::WAITING_FOR_COORDINATOR;
+                        this->election_start_time = chrono::steady_clock::now();
+                    } else {
+                        // O desafiante é menor. Apenas reafirmo minha liderança.
+                         Message response_msg = {Type::COORDINATOR, 0, 0};
+                         sendto(this->server_socket, &response_msg, sizeof(response_msg), 0, (struct sockaddr *)&from_addr, sizeof(from_addr));
+                    }
                     break;
                 }
                 case Type::ARE_YOU_ALIVE: {
