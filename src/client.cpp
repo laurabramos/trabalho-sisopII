@@ -42,7 +42,7 @@ string Client::discoverServer(int Discovery_Port, int Request_Port) {
 
     broadcastAddr.sin_family = AF_INET;
     broadcastAddr.sin_port = htons(Discovery_Port);
-    broadcastAddr.sin_addr.s_addr = inet_addr(BROADCAST_ADDR);
+    inet_pton(AF_INET, BROADCAST_ADDR, &broadcastAddr.sin_addr);
     
     cout << "Procurando servidor na rede..." << endl;
 
