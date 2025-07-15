@@ -42,6 +42,12 @@ Server::Server(int client_port, int req_port, int server_comm_port)
     this->election_requested = false;
 }
 
+uint32_t ipToInt(const std::string &ipStr) {
+    struct in_addr ip_addr;
+    inet_aton(ipStr.c_str(), &ip_addr);
+    return ntohl(ip_addr.s_addr);
+}
+
 Server::~Server()
 {
     if (server_socket != -1)
