@@ -38,7 +38,7 @@ Server::Server(int client_port, int req_port, int server_comm_port)
     this->server_socket = -1;
     this->client_socket = -1;
     this->current_state = ServerState::NORMAL;
-    this->role = ServerRole::BACKUP;
+    this->role = ServerRole::NEEDS_ELECTION;
     this->election_requested = false;
 }
 
@@ -59,12 +59,8 @@ void Server::start()
 
     while (true)
     {
-        this->role = ServerRole::NEED_ELECTION; // Resetando o papel para iniciar a descoberta ou eleição.
-        this->leader_ip = "";
-        this->server_list.clear();
-        this->current_state = ServerState::NORMAL;
 
-        findLeaderOrCreateGroup();
+        findAndElect();
 
         while (this->role == ServerRole::LEADER || this->role == ServerRole::BACKUP)
         {
@@ -81,11 +77,119 @@ void Server::start()
         log_with_timestamp("[" + my_ip + "] Ocorreu um evento. Reiniciando descoberta de grupo.");
         close(this->server_socket);
         this->server_socket = -1;
-        this_thread::sleep_for(chrono::seconds(1));
+        this_thread::sleep_for(chrono::seconds(2));
     }
 
     // Se o loop principal terminar um dia, junte-se à thread.
     client_comm_thread.join();
+}
+
+void Server::findAndElect()
+{
+    log_with_timestamp("[" + my_ip + "] --- INICIANDO FASE DE DESCOBERTA E ELEIÇÃO ---");
+
+    // Reinicia o estado para um começo limpo
+    this->leader_ip = "";
+    this->server_list.clear();
+    this->role = ServerRole::BACKUP; // Assume-se temporariamente como backup
+    this->current_state = ServerState::NORMAL;
+
+    // Cria o socket de comunicação entre servidores
+    this->server_socket = createSocket(this->server_communication_port);
+    if (this->server_socket == -1)
+    {
+        log_with_timestamp("Falha crítica ao criar socket. Encerrando.");
+        exit(1);
+    }
+    setSocketBroadcastOptions(this->server_socket);
+
+    struct sockaddr_in broadcast_addr = {};
+    broadcast_addr.sin_family = AF_INET;
+    broadcast_addr.sin_port = htons(this->server_communication_port);
+    inet_pton(AF_INET, BROADCAST_ADDR, &broadcast_addr.sin_addr);
+
+    // FASE 1: ANUNCIAR PRESENÇA (BROADCAST)
+    log_with_timestamp("[" + my_ip + "] Fase 1: Anunciando presença na rede...");
+    Message discovery_msg = {Type::SERVER_DISCOVERY};
+    for (int i = 0; i < 3; ++i)
+    {
+        sendto(this->server_socket, &discovery_msg, sizeof(discovery_msg), 0, (struct sockaddr *)&broadcast_addr, sizeof(broadcast_addr));
+        this_thread::sleep_for(chrono::milliseconds(300));
+    }
+
+    // FASE 2: ESCUTAR RESPOSTAS E OUTROS SERVIDORES
+    log_with_timestamp("[" + my_ip + "] Fase 2: Escutando por outros servidores e líderes...");
+    setSocketTimeout(this->server_socket, 4); // Aumenta o tempo de escuta
+    auto listen_start_time = chrono::steady_clock::now();
+    while (chrono::duration_cast<chrono::seconds>(chrono::steady_clock::now() - listen_start_time).count() < 4)
+    {
+        Message response;
+        struct sockaddr_in from_addr;
+        socklen_t from_len = sizeof(from_addr);
+        if (recvfrom(this->server_socket, &response, sizeof(response), 0, (struct sockaddr *)&from_addr, &from_len) > 0)
+        {
+            string from_ip = inet_ntoa(from_addr.sin_addr);
+            if (from_ip == my_ip)
+                continue;
+
+            // Se recebermos um HEARTBEAT ou COORD, temos um candidato a líder
+            if (response.type == Type::HEARTBEAT || response.type == Type::COORDINATOR)
+            {
+                if (ipToInt(from_ip) > ipToInt(this->leader_ip))
+                {
+                    this->leader_ip = from_ip;
+                    log_with_timestamp("[" + my_ip + "] Candidato a líder detectado: " + from_ip);
+                }
+            }
+
+            // Adiciona qualquer servidor que responder à lista de conhecidos
+            lock_guard<mutex> lock(serverListMutex);
+            if (!checkList(from_ip))
+            {
+                server_list.push_back({from_ip});
+                log_with_timestamp("[" + my_ip + "] Servidor " + from_ip + " detectado.");
+            }
+        }
+    }
+
+    // FASE 3: DECISÃO
+    if (!this->leader_ip.empty() && ipToInt(this->my_ip) < ipToInt(this->leader_ip))
+    {
+        // Encontramos um líder e ele é mais forte. Nos tornamos backup.
+        this->role = ServerRole::BACKUP;
+        log_with_timestamp("[" + my_ip + "] Líder estável encontrado em " + this->leader_ip + ". Tornando-me BACKUP.");
+        return; // Fim da fase, pronto para operar.
+    }
+
+    // Se não há líder, ou se o líder encontrado é mais fraco, uma eleição é necessária.
+    log_with_timestamp("[" + my_ip + "] Nenhum líder válido encontrado. Iniciando eleição geral.");
+    startElection();
+
+    // A eleição pode demorar. Entramos num loop de espera pelo resultado.
+    log_with_timestamp("[" + my_ip + "] Aguardando resultado da eleição...");
+    auto election_wait_start = chrono::steady_clock::now();
+    const int ELECTION_WAIT_TIMEOUT = 15; // Timeout generoso para a eleição resolver-se
+
+    while (chrono::duration_cast<chrono::seconds>(chrono::steady_clock::now() - election_wait_start).count() < ELECTION_WAIT_TIMEOUT)
+    {
+        if (!this->leader_ip.empty() && this->leader_ip != this->my_ip)
+        {
+            // Outro servidor se tornou líder, e nós o aceitamos.
+            this->role = ServerRole::BACKUP;
+            log_with_timestamp("[" + my_ip + "] Eleição concluída. Novo líder é " + this->leader_ip);
+            return;
+        }
+        if (this->role == ServerRole::LEADER)
+        {
+            // Nós nos tornamos o líder.
+            log_with_timestamp("[" + my_ip + "] Eleição concluída. Eu sou o novo líder.");
+            return;
+        }
+        this_thread::sleep_for(chrono::milliseconds(500));
+    }
+
+    log_with_timestamp("[" + my_ip + "] Timeout de espera da eleição. Tentando novamente...");
+    // Se o timeout expirar, o loop em start() irá recomeçar o processo.
 }
 
 void Server::handleServerDiscovery(const struct sockaddr_in &fromAddr)
@@ -242,39 +346,53 @@ void Server::findLeaderOrCreateGroup()
 
 void Server::startElection()
 {
-    ServerState expected = ServerState::NORMAL;
-    if (!this->current_state.compare_exchange_strong(expected, ServerState::ELECTION_RUNNING))
-    {
-        return;
-    }
-    log_with_timestamp("[" + my_ip + "] INICIANDO PROCESSO DE ELEIÇÃO ASSÍNCRONO.");
-
+    this->current_state = ServerState::ELECTION_RUNNING;
     this->election_start_time = chrono::steady_clock::now();
 
-    std::vector<ServerInfo> current_servers;
+    log_with_timestamp("[" + my_ip + "] Iniciando envio de mensagens de eleição...");
+
+    std::vector<ServerInfo> servers_to_bully;
     {
         lock_guard<mutex> lock(serverListMutex);
-        current_servers = this->server_list;
-    }
-
-    bool has_bullies = false;
-    for (const auto &server : current_servers)
-    {
-        if (ipToInt(server.ip_address) > ipToInt(this->my_ip))
+        for (const auto &s : server_list)
         {
-            has_bullies = true;
-            struct sockaddr_in dest_addr = {};
-            dest_addr.sin_family = AF_INET;
-            dest_addr.sin_port = htons(this->server_communication_port);
-            inet_pton(AF_INET, server.ip_address.c_str(), &dest_addr.sin_addr);
-            Message election_msg = {Type::ELECTION, 0, 0};
-            sendto(this->server_socket, &election_msg, sizeof(election_msg), 0, (struct sockaddr *)&dest_addr, sizeof(dest_addr));
+            if (ipToInt(s.ip_address) > ipToInt(this->my_ip))
+            {
+                servers_to_bully.push_back(s);
+            }
         }
     }
 
-    if (!has_bullies)
+    if (servers_to_bully.empty())
     {
-        log_with_timestamp("[" + my_ip + "] Nenhum valentão na lista. Aguardando timeout para confirmar vitória.");
+        log_with_timestamp("[" + my_ip + "] Nenhum valentão encontrado. Assumindo liderança.");
+        this->role = ServerRole::LEADER;
+        this->leader_ip = this->my_ip;
+        this->current_state = ServerState::NORMAL;
+        return;
+    }
+
+    Message election_msg = {Type::ELECTION};
+    for (const auto &bully : servers_to_bully)
+    {
+        struct sockaddr_in dest_addr = {};
+        dest_addr.sin_family = AF_INET;
+        dest_addr.sin_port = htons(this->server_communication_port);
+        inet_pton(AF_INET, bully.ip_address.c_str(), &dest_addr.sin_addr);
+        sendto(this->server_socket, &election_msg, sizeof(election_msg), 0, (struct sockaddr *)&dest_addr, sizeof(dest_addr));
+    }
+    log_with_timestamp("[" + my_ip + "] Mensagens de eleição enviadas. Aguardando respostas...");
+
+    // Espera por respostas (OK_ANSWER)
+    this_thread::sleep_for(chrono::seconds(2)); // Tempo para as respostas chegarem
+
+    if (this->current_state == ServerState::ELECTION_RUNNING)
+    {
+        // Se ninguém respondeu, eu sou o líder.
+        log_with_timestamp("[" + my_ip + "] Ninguém maior respondeu. Assumindo liderança.");
+        this->role = ServerRole::LEADER;
+        this->leader_ip = this->my_ip;
+        this->current_state = ServerState::NORMAL;
     }
 }
 
@@ -309,53 +427,58 @@ void Server::waitForNewLeader()
 // Funções de Papel (Leader, Backup)
 void Server::runAsLeader()
 {
-    log_with_timestamp("ASSUMINDO PAPEL DE LÍDER.");
+    log_with_timestamp("--- MODO LÍDER ATIVADO ---");
+    // Garante que o estado está correto
+    this->leader_ip = this->my_ip;
+    this->current_state = ServerState::NORMAL;
 
-    if (this->server_socket == -1)
-        this->server_socket = createSocket(this->server_communication_port);
-    if (this->client_socket == -1)
-        this->client_socket = createSocket(this->client_discovery_port);
+    // A fase de anúncio (se necessária) deve ser chamada aqui.
+    // Para simplificar, vamos assumir que os heartbeats farão o trabalho.
 
-    thread server_listener_thread(&Server::listenForServerMessages, this);
-    thread client_listener_thread(&Server::listenForClientMessages, this);
-    // A thread client_comm_thread NÃO é mais iniciada aqui.
     thread heartbeat_thread(&Server::sendHeartbeats, this);
+    thread server_listener_thread(&Server::listenForServerMessages, this);
+    // client_listener_thread não é mais necessária se o redirecionamento funcionar bem
 
     while (this->role == ServerRole::LEADER)
     {
         this_thread::sleep_for(chrono::seconds(1));
     }
-    log_with_timestamp("Deixando o papel de líder.");
 
-    // O join da client_comm_thread NÃO é mais feito aqui.
-    server_listener_thread.join();
-    client_listener_thread.join();
+    log_with_timestamp("Deixando o papel de líder...");
     heartbeat_thread.join();
+    server_listener_thread.join();
 }
 
 void Server::listenForServerMessages()
 {
     while (this->role == ServerRole::LEADER)
     {
+        setSocketTimeout(this->server_socket, 1);
+        Message msg;
         struct sockaddr_in from_addr;
         socklen_t from_len = sizeof(from_addr);
-        Message msg;
-        setSocketTimeout(this->server_socket, 1);
-        if (recvfrom(this->server_socket, &msg, sizeof(Message), 0, (struct sockaddr *)&from_addr, &from_len) > 0)
+
+        if (recvfrom(server_socket, &msg, sizeof(msg), 0, (struct sockaddr *)&from_addr, &from_len) > 0)
         {
             string from_ip = inet_ntoa(from_addr.sin_addr);
             if (from_ip == my_ip)
                 continue;
 
-            if (msg.type == Type::COORDINATOR || msg.type == Type::HEARTBEAT)
+            switch (msg.type)
             {
-                string from_ip = inet_ntoa(from_addr.sin_addr);
+            case Type::SERVER_DISCOVERY:
+                handleServerDiscovery(from_addr);
+                break;
+            case Type::COORDINATOR: // Alguém se anunciou como líder
+            case Type::HEARTBEAT:   // Ou um líder está a enviar heartbeats
                 if (ipToInt(from_ip) > ipToInt(this->my_ip))
                 {
-                    log_with_timestamp("[" + my_ip + "] Detectei um novo líder mais forte (" + from_ip + "). Cedendo e reiniciando.");
+                    log_with_timestamp("[" + my_ip + "] Detectei um líder mais forte (" + from_ip + "). Cedendo liderança e reiniciando.");
                     this->role = ServerRole::NEEDS_ELECTION;
-                    break; // Sai do loop de escuta
                 }
+                break;
+            default:
+                break;
             }
         }
     }
@@ -395,12 +518,13 @@ void Server::sendHeartbeats()
     broadcast_addr.sin_port = htons(this->server_communication_port);
     inet_pton(AF_INET, BROADCAST_ADDR, &broadcast_addr.sin_addr);
     setSocketBroadcastOptions(this->server_socket);
-    Message hb_msg = {Type::HEARTBEAT, 0, 0, 0};
+
+    Message hb_msg = {Type::HEARTBEAT};
 
     while (this->role == ServerRole::LEADER)
     {
-        this_thread::sleep_for(chrono::seconds(2));
         sendto(this->server_socket, &hb_msg, sizeof(hb_msg), 0, (struct sockaddr *)&broadcast_addr, sizeof(broadcast_addr));
+        this_thread::sleep_for(chrono::seconds(2));
     }
 }
 
@@ -408,21 +532,20 @@ void Server::checkForLeaderFailure()
 {
     this->last_heartbeat_time = chrono::steady_clock::now();
     const int HEARTBEAT_TIMEOUT_SEC = 5;
-    const int CHALLENGE_TIMEOUT_MSEC = 1000;
-
-    random_device rd;
-    mt19937 gen(rd());
-    uniform_int_distribution<> distrib(50, 250);
 
     while (this->role == ServerRole::BACKUP)
     {
         this_thread::sleep_for(chrono::seconds(1));
-        if (this->current_state != ServerState::NORMAL)
+
+        if (this->leader_ip.empty() || this->leader_ip == this->my_ip)
+        {
             continue;
+        }
 
         if (chrono::duration_cast<chrono::seconds>(chrono::steady_clock::now() - last_heartbeat_time).count() > HEARTBEAT_TIMEOUT_SEC)
         {
-            this->role = ServerRole::NEED_ELECTION;
+            log_with_timestamp("[" + my_ip + "] Líder (" + leader_ip + ") inativo. Reiniciando para forçar nova eleição.");
+            this->role = ServerRole::NEEDS_ELECTION;
             return;
         }
     }
@@ -430,7 +553,9 @@ void Server::checkForLeaderFailure()
 
 void Server::runAsBackup()
 {
-    log_with_timestamp("[" + my_ip + "] Atuando como BACKUP. Líder: " + this->leader_ip);
+    log_with_timestamp("--- MODO BACKUP ATIVADO. Líder: " + this->leader_ip + " ---");
+    this->current_state = ServerState::NORMAL; // Garante estado limpo
+
     thread failure_detection_thread(&Server::checkForLeaderFailure, this);
 
     while (this->role == ServerRole::BACKUP)
@@ -443,19 +568,32 @@ void Server::runAsBackup()
         if (recvfrom(server_socket, &msg, sizeof(msg), 0, (struct sockaddr *)&from_addr, &from_len) > 0)
         {
             string from_ip = inet_ntoa(from_addr.sin_addr);
+            if (from_ip == my_ip)
+                continue;
+
+            // Se a mensagem vem do líder, atualiza o timer.
             if (from_ip == this->leader_ip)
             {
                 this->last_heartbeat_time = chrono::steady_clock::now();
-                if (msg.type == Type::REPLICATION_UPDATE)
-                {
-                    // Lógica de replicação que você já tem...
-                }
             }
-            else if (ipToInt(from_ip) > ipToInt(this->leader_ip))
+
+            switch (msg.type)
             {
-                // Um novo líder mais forte apareceu! Força uma re-eleição.
-                log_with_timestamp("[" + my_ip + "] Detectei um novo líder mais forte (" + from_ip + "). Reiniciando.");
-                this->role = ServerRole::NEEDS_ELECTION;
+            case Type::HEARTBEAT:
+            case Type::COORDINATOR:
+                // Se um líder mais forte (ou um novo líder) se anuncia, reinicia o processo.
+                if (ipToInt(from_ip) > ipToInt(this->leader_ip))
+                {
+                    log_with_timestamp("[" + my_ip + "] Detectado novo líder mais forte: " + from_ip + ". Reiniciando.");
+                    this->role = ServerRole::NEEDS_ELECTION;
+                }
+                break;
+            case Type::ELECTION:
+                handleElectionMessage(from_addr);
+                break;
+            // Outros tipos de mensagem (como REPLICATION_UPDATE) podem ser tratados aqui.
+            default:
+                break;
             }
         }
     }
