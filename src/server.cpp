@@ -153,7 +153,6 @@ void Server::findLeaderOrCreateGroup() {
     startElection();
 }
 
-// ALTERAÇÃO: Lógica de eleição refeita para ser mais robusta com a máquina de estados.
 void Server::startElection() {
     ServerState expected = ServerState::NORMAL;
     if (!this->current_state.compare_exchange_strong(expected, ServerState::ELECTION_RUNNING)) {
@@ -162,15 +161,50 @@ void Server::startElection() {
     }
 
     log_with_timestamp("[" + my_ip + "] INICIANDO ELEIÇÃO.");
-    struct sockaddr_in broadcast_addr = {};
-    broadcast_addr.sin_family = AF_INET;
-    broadcast_addr.sin_port = htons(this->server_communication_port);
-    inet_pton(AF_INET, BROADCAST_ADDR, &broadcast_addr.sin_addr);
-    Message election_msg = {Type::ELECTION, 0, 0};
-    sendto(this->server_socket, &election_msg, sizeof(election_msg), 0, (struct sockaddr *)&broadcast_addr, sizeof(broadcast_addr));
+    
+    // 1. Pega uma cópia da lista de servidores para trabalhar
+    std::vector<ServerInfo> current_servers;
+    {
+        lock_guard<mutex> lock(serverListMutex);
+        current_servers = this->server_list;
+    }
 
+    // 2. Envia mensagem ELECTION (UNICAST) apenas para servidores com IP maior
+    bool has_bullies = false;
+    for (const auto& server : current_servers) {
+        if (ipToInt(server.ip_address) > ipToInt(this->my_ip)) {
+            has_bullies = true;
+            log_with_timestamp("[" + my_ip + "] Enviando ELECTION para o valentão: " + server.ip_address);
+            
+            struct sockaddr_in dest_addr = {};
+            dest_addr.sin_family = AF_INET;
+            dest_addr.sin_port = htons(this->server_communication_port);
+            inet_pton(AF_INET, server.ip_address.c_str(), &dest_addr.sin_addr);
+            
+            Message election_msg = {Type::ELECTION, 0, 0};
+            sendto(this->server_socket, &election_msg, sizeof(election_msg), 0, (struct sockaddr *)&dest_addr, sizeof(dest_addr));
+        }
+    }
+
+    // 3. Se não existem valentões, declara-se líder imediatamente.
+    if (!has_bullies) {
+        log_with_timestamp("[" + my_ip + "] Nenhum servidor com IP maior encontrado. Venci a eleição instantaneamente.");
+        this->role = ServerRole::LEADER;
+        this->leader_ip = this->my_ip;
+        this->current_state = ServerState::NORMAL;
+
+        struct sockaddr_in broadcast_addr = {};
+        broadcast_addr.sin_family = AF_INET;
+        broadcast_addr.sin_port = htons(this->server_communication_port);
+        inet_pton(AF_INET, BROADCAST_ADDR, &broadcast_addr.sin_addr);
+        Message coordinator_msg = {Type::COORDINATOR, 0, 0};
+        sendto(this->server_socket, &coordinator_msg, sizeof(coordinator_msg), 0, (struct sockaddr *)&broadcast_addr, sizeof(broadcast_addr));
+        return;
+    }
+
+    // 4. Se enviou mensagens para valentões, espera por uma resposta.
     bool got_objection = false; 
-    const int ELECTION_TIMEOUT_SEC = 4;
+    const int ELECTION_TIMEOUT_SEC = 4; // Usando o timeout maior
     auto election_start_time = chrono::steady_clock::now();
     setSocketTimeout(this->server_socket, ELECTION_TIMEOUT_SEC);
 
@@ -186,16 +220,27 @@ void Server::startElection() {
                 log_with_timestamp("[" + my_ip + "] Recebi OK_ANSWER de " + from_ip + ". Perdi a eleição.");
                 got_objection = true;
                 break;
+            } else if (response.type == Type::COORDINATOR) {
+                log_with_timestamp("[" + my_ip + "] Recebi um COORDINATOR durante minha eleição. Abortando.");
+                handleCoordinatorMessage(from_addr);
+                setSocketTimeout(this->server_socket, 0);
+                return; // A eleição acabou, um líder já foi eleito.
             }
         }
     }
     setSocketTimeout(this->server_socket, 0);
 
+    // 5. Se o timeout estourou sem objeções, declara-se líder.
     if (!got_objection) {
-        log_with_timestamp("[" + my_ip + "] Venci a eleição. Anunciando-me como COORDENADOR.");
+        log_with_timestamp("[" + my_ip + "] Valentões não responderam. Venci a eleição.");
         this->role = ServerRole::LEADER;
         this->leader_ip = this->my_ip;
         this->current_state = ServerState::NORMAL;
+        
+        struct sockaddr_in broadcast_addr = {};
+        broadcast_addr.sin_family = AF_INET;
+        broadcast_addr.sin_port = htons(this->server_communication_port);
+        inet_pton(AF_INET, BROADCAST_ADDR, &broadcast_addr.sin_addr);
         Message coordinator_msg = {Type::COORDINATOR, 0, 0};
         sendto(this->server_socket, &coordinator_msg, sizeof(coordinator_msg), 0, (struct sockaddr *)&broadcast_addr, sizeof(broadcast_addr));
     } else {
@@ -324,11 +369,14 @@ void Server::sendHeartbeats() {
     }
 }
 
-// ALTERAÇÃO: Lógica de detecção de falha ajustada para a nova máquina de estados.
 void Server::checkForLeaderFailure() {
     this->last_heartbeat_time = chrono::steady_clock::now();
     const int HEARTBEAT_TIMEOUT_SEC = 5;
     const int CHALLENGE_TIMEOUT_MSEC = 1000;
+
+    random_device rd;
+    mt19937 gen(rd());
+    uniform_int_distribution<> distrib(50, 250);
 
     while (this->role == ServerRole::BACKUP) {
         this_thread::sleep_for(chrono::seconds(1));
@@ -348,12 +396,17 @@ void Server::checkForLeaderFailure() {
 
             if (chrono::duration_cast<chrono::seconds>(chrono::steady_clock::now() - last_heartbeat_time).count() > HEARTBEAT_TIMEOUT_SEC) {
                 log_with_timestamp("[" + my_ip + "] Desafio não respondido. Líder considerado morto.");
+                
+                // ======================================================================
+                // CORREÇÃO FINAL: Atraso aleatório antes de iniciar a eleição
+                // para quebrar a simetria entre os backups.
+                // ======================================================================
+                this_thread::sleep_for(chrono::milliseconds(distrib(gen)));
                 startElection();
             }
         }
     }
 }
-
 void Server::runAsBackup() {
     log_with_timestamp("[" + my_ip + "] Atuando como BACKUP. Líder: " + this->leader_ip);
     thread failure_detection_thread(&Server::checkForLeaderFailure, this);
