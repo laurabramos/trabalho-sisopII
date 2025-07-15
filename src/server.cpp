@@ -241,6 +241,25 @@ void Server::handleServerDiscovery(const struct sockaddr_in &fromAddr) {
     // ================================================================
 }
 
+void Server::listenForBackupMessages() {
+    while (role == ServerRole::BACKUP) {
+        setSocketTimeout(server_socket, 1); // Timeout curto para não bloquear o loop
+        Message msg;
+        struct sockaddr_in from_addr;
+        socklen_t from_len = sizeof(from_addr);
+
+        if (recvfrom(server_socket, &msg, sizeof(msg), 0, (struct sockaddr *)&from_addr, &from_len) > 0) {
+            string from_ip = inet_ntoa(from_addr.sin_addr);
+
+            // Se a mensagem é um HEARTBEAT e vem do líder que eu conheço
+            if (msg.type == Type::HEARTBEAT && from_ip == this->leader_ip) {
+                // Atualiza o timestamp do último heartbeat recebido
+                last_heartbeat_time = chrono::steady_clock::now();
+            }
+        }
+    }
+}
+
 void Server::receiveNumbers() {
     int numSocket = createSocket(client_request_port);
     if (numSocket == -1) { return; }
