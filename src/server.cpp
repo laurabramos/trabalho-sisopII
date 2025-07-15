@@ -272,30 +272,21 @@ void Server::listenForServerMessages() {
                 case Type::SERVER_DISCOVERY:   
                     handleServerDiscovery(from_addr);
                     break;
-                
-                // ======================================================================
-                // CORREÇÃO FINAL: LÍDER DEVE CEDER A UM VALENTÃO MAIOR
-                // ======================================================================
                 case Type::ELECTION: {
-                    log_with_timestamp("[" + my_ip + "] [LÍDER] Recebi ELECTION de " + from_ip);
                     if (ipToInt(this->my_ip) < ipToInt(from_ip)) {
-                        // O desafiante tem um IP maior. Eu perdi.
-                        log_with_timestamp("[" + my_ip + "] O desafiante é maior. Cedendo liderança.");
-                        
-                        // Envia OK para o desafiante
+                        log_with_timestamp("[" + my_ip + "] [LÍDER] Desafiado por " + from_ip + ". Cedendo liderança.");
                         Message answer_msg = {Type::OK_ANSWER, 0, 0};
                         sendto(this->server_socket, &answer_msg, sizeof(answer_msg), 0, (struct sockaddr *)&from_addr, sizeof(from_addr));
-                        
-                        // Torna-se um backup e sai do modo líder
                         this->role = ServerRole::BACKUP;
                         this->current_state = ServerState::WAITING_FOR_COORDINATOR;
                         this->election_start_time = chrono::steady_clock::now();
-                    } else {
-                        // O desafiante é menor. Apenas reafirmo minha liderança.
-                         Message response_msg = {Type::COORDINATOR, 0, 0};
-                         sendto(this->server_socket, &response_msg, sizeof(response_msg), 0, (struct sockaddr *)&from_addr, sizeof(from_addr));
                     }
                     break;
+                }
+                case Type::COORDINATOR:
+                     // Um líder precisa reagir se outro (com IP maior) se declarar líder
+                     handleCoordinatorMessage(from_addr);
+                     break;
                 }
                 case Type::ARE_YOU_ALIVE: {
                     Message response_msg = {Type::I_AM_ALIVE, 0, 0};
@@ -446,6 +437,13 @@ void Server::runAsBackup() {
                         handleElectionMessage(from_addr);
                         break;
                     case Type::HEARTBEAT:
+                        if(from_ip == this->leader_ip) {
+                            this->last_heartbeat_time = chrono::steady_clock::now();
+                            // Responde ao heartbeat para que o líder saiba que estamos vivos
+                            Message ack_msg = {Type::SERVER_DISCOVERY, 0, 0}; // Reutiliza a msg de descoberta como um "presente"
+                            sendto(this->server_socket, &ack_msg, sizeof(ack_msg), 0, (struct sockaddr *)&from_addr, from_len);
+                        }
+                        break;
                     case Type::I_AM_ALIVE:
                          if(from_ip == this->leader_ip) this->last_heartbeat_time = chrono::steady_clock::now();
                          break;
