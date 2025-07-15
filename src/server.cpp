@@ -119,18 +119,16 @@ void Server::findLeaderOrCreateGroup() {
     inet_pton(AF_INET, BROADCAST_ADDR, &broadcast_addr.sin_addr);
 
     // FASE 1: ANUNCIAR PRESENÇA (BROADCAST)
-    // Por 2 segundos, apenas envia mensagens de descoberta para que todos saibam quem está online.
-    log_with_timestamp("[" + my_ip + "] Anunciando presença na rede...");
+    log_with_timestamp("[" + my_ip + "] Fase 1: Anunciando presença na rede...");
     auto broadcast_start_time = chrono::steady_clock::now();
     while (chrono::duration_cast<chrono::seconds>(chrono::steady_clock::now() - broadcast_start_time).count() < 2) {
         Message discovery_msg = {Type::SERVER_DISCOVERY, 0, 0};
         sendto(this->server_socket, &discovery_msg, sizeof(discovery_msg), 0, (struct sockaddr *)&broadcast_addr, sizeof(broadcast_addr));
-        this_thread::sleep_for(chrono::milliseconds(250));
+        this_thread::sleep_for(chrono::milliseconds(500));
     }
 
     // FASE 2: ESCUTAR RESPOSTAS E OUTROS SERVIDORES
-    // Por 3 segundos, apenas escuta para descobrir líderes existentes ou outros servidores novos.
-    log_with_timestamp("[" + my_ip + "] Escutando por outros servidores e líderes...");
+    log_with_timestamp("[" + my_ip + "] Fase 2: Escutando por outros servidores e líderes...");
     setSocketTimeout(this->server_socket, 3);
     auto listen_start_time = chrono::steady_clock::now();
     while (chrono::duration_cast<chrono::seconds>(chrono::steady_clock::now() - listen_start_time).count() < 3) {
@@ -141,16 +139,11 @@ void Server::findLeaderOrCreateGroup() {
             string from_ip = inet_ntoa(from_addr.sin_addr);
             if (from_ip == my_ip) continue;
             
-            // Se um líder responder, torna-se backup e encerra a descoberta.
-            if (response.type == Type::SERVER_DISCOVERY_ACK || response.type == Type::HEARTBEAT) {
-                this->leader_ip = from_ip;
-                this->role = ServerRole::BACKUP;
-                log_with_timestamp("[" + my_ip + "] Líder existente encontrado em " + this->leader_ip + ". Tornando-me BACKUP.");
-                setSocketTimeout(this->server_socket, 0);
-                return;
-            }
-            // Se outro servidor novo se anunciar, adiciona à lista.
-            else if (response.type == Type::SERVER_DISCOVERY) {
+            if (response.type == Type::SERVER_DISCOVERY_ACK || response.type == Type::HEARTBEAT || response.type == Type::COORDINATOR) {
+                if (ipToInt(from_ip) > ipToInt(this->leader_ip)) { // Aceita apenas líderes com IP maior, se já tiver um
+                    this->leader_ip = from_ip;
+                }
+            } else if (response.type == Type::SERVER_DISCOVERY) {
                  lock_guard<mutex> lock(serverListMutex);
                  if (!checkList(from_ip)) {
                     server_list.push_back({from_ip});
@@ -161,104 +154,46 @@ void Server::findLeaderOrCreateGroup() {
     }
 
     // FASE 3: DECISÃO
-    // Se, após as duas fases, nenhum líder foi encontrado, inicia uma eleição.
+    if (!this->leader_ip.empty()) {
+        this->role = ServerRole::BACKUP;
+        log_with_timestamp("[" + my_ip + "] Líder existente encontrado em " + this->leader_ip + ". Tornando-me BACKUP.");
+        return;
+    }
+    
     log_with_timestamp("[" + my_ip + "] Fase de descoberta encerrada. Nenhum líder encontrado. Iniciando eleição...");
-    setSocketTimeout(this->server_socket, 0);
     startElection();
 }
 
 void Server::startElection() {
     ServerState expected = ServerState::NORMAL;
     if (!this->current_state.compare_exchange_strong(expected, ServerState::ELECTION_RUNNING)) {
-        log_with_timestamp("[" + my_ip + "] Tentei iniciar eleição, mas uma já está em andamento.");
         return;
     }
-
-    log_with_timestamp("[" + my_ip + "] INICIANDO ELEIÇÃO.");
+    log_with_timestamp("[" + my_ip + "] INICIANDO PROCESSO DE ELEIÇÃO ASSÍNCRONO.");
     
-    // 1. Pega uma cópia da lista de servidores para trabalhar
+    this->election_start_time = chrono::steady_clock::now();
+
     std::vector<ServerInfo> current_servers;
     {
         lock_guard<mutex> lock(serverListMutex);
         current_servers = this->server_list;
     }
 
-    // 2. Envia mensagem ELECTION (UNICAST) apenas para servidores com IP maior
     bool has_bullies = false;
     for (const auto& server : current_servers) {
         if (ipToInt(server.ip_address) > ipToInt(this->my_ip)) {
             has_bullies = true;
-            log_with_timestamp("[" + my_ip + "] Enviando ELECTION para o valentão: " + server.ip_address);
-            
             struct sockaddr_in dest_addr = {};
             dest_addr.sin_family = AF_INET;
             dest_addr.sin_port = htons(this->server_communication_port);
             inet_pton(AF_INET, server.ip_address.c_str(), &dest_addr.sin_addr);
-            
             Message election_msg = {Type::ELECTION, 0, 0};
             sendto(this->server_socket, &election_msg, sizeof(election_msg), 0, (struct sockaddr *)&dest_addr, sizeof(dest_addr));
         }
     }
 
-    // 3. Se não existem valentões, declara-se líder imediatamente.
     if (!has_bullies) {
-        log_with_timestamp("[" + my_ip + "] Nenhum servidor com IP maior encontrado. Venci a eleição instantaneamente.");
-        this->role = ServerRole::LEADER;
-        this->leader_ip = this->my_ip;
-        this->current_state = ServerState::NORMAL;
-
-        struct sockaddr_in broadcast_addr = {};
-        broadcast_addr.sin_family = AF_INET;
-        broadcast_addr.sin_port = htons(this->server_communication_port);
-        inet_pton(AF_INET, BROADCAST_ADDR, &broadcast_addr.sin_addr);
-        Message coordinator_msg = {Type::COORDINATOR, 0, 0};
-        sendto(this->server_socket, &coordinator_msg, sizeof(coordinator_msg), 0, (struct sockaddr *)&broadcast_addr, sizeof(broadcast_addr));
-        return;
-    }
-
-    // 4. Se enviou mensagens para valentões, espera por uma resposta.
-    bool got_objection = false; 
-    const int ELECTION_TIMEOUT_SEC = 4; // Usando o timeout maior
-    auto election_start_time = chrono::steady_clock::now();
-    setSocketTimeout(this->server_socket, ELECTION_TIMEOUT_SEC);
-
-    while (chrono::duration_cast<chrono::seconds>(chrono::steady_clock::now() - election_start_time).count() < ELECTION_TIMEOUT_SEC) {
-        Message response;
-        struct sockaddr_in from_addr;
-        socklen_t from_len = sizeof(from_addr);
-        if (recvfrom(this->server_socket, &response, sizeof(response), 0, (struct sockaddr *)&from_addr, &from_len) > 0) {
-            string from_ip = inet_ntoa(from_addr.sin_addr);
-            if (from_ip == my_ip) continue;
-
-            if (response.type == Type::OK_ANSWER) {
-                log_with_timestamp("[" + my_ip + "] Recebi OK_ANSWER de " + from_ip + ". Perdi a eleição.");
-                got_objection = true;
-                break;
-            } else if (response.type == Type::COORDINATOR) {
-                log_with_timestamp("[" + my_ip + "] Recebi um COORDINATOR durante minha eleição. Abortando.");
-                handleCoordinatorMessage(from_addr);
-                setSocketTimeout(this->server_socket, 0);
-                return; // A eleição acabou, um líder já foi eleito.
-            }
-        }
-    }
-    setSocketTimeout(this->server_socket, 0);
-
-    // 5. Se o timeout estourou sem objeções, declara-se líder.
-    if (!got_objection) {
-        log_with_timestamp("[" + my_ip + "] Valentões não responderam. Venci a eleição.");
-        this->role = ServerRole::LEADER;
-        this->leader_ip = this->my_ip;
-        this->current_state = ServerState::NORMAL;
-        
-        struct sockaddr_in broadcast_addr = {};
-        broadcast_addr.sin_family = AF_INET;
-        broadcast_addr.sin_port = htons(this->server_communication_port);
-        inet_pton(AF_INET, BROADCAST_ADDR, &broadcast_addr.sin_addr);
-        Message coordinator_msg = {Type::COORDINATOR, 0, 0};
-        sendto(this->server_socket, &coordinator_msg, sizeof(coordinator_msg), 0, (struct sockaddr *)&broadcast_addr, sizeof(broadcast_addr));
-    } else {
-        waitForNewLeader();
+        log_with_timestamp("[" + my_ip + "] Nenhum valentão na lista. Aguardando timeout para confirmar vitória.");
     }
 }
 
@@ -428,64 +363,96 @@ void Server::runAsBackup() {
     this->election_requested = false;
 
     while (this->role == ServerRole::BACKUP) {
-        setSocketTimeout(this->server_socket, 1); 
+        // ========== LOOP DE ESTADO PRINCIPAL (CÉREBRO DO BACKUP) ==========
 
+        // 1. LÓGICA DE ELEIÇÃO EM ANDAMENTO
+        if (this->current_state == ServerState::ELECTION_RUNNING) {
+            const int ELECTION_TIMEOUT_SEC = 4;
+            if (chrono::duration_cast<chrono::seconds>(chrono::steady_clock::now() - this->election_start_time).count() > ELECTION_TIMEOUT_SEC) {
+                log_with_timestamp("[" + my_ip + "] Timeout da eleição atingido. Venci e me torno o novo líder!");
+                this->role = ServerRole::LEADER;
+                this->leader_ip = this->my_ip;
+                this->current_state = ServerState::NORMAL;
+                
+                struct sockaddr_in broadcast_addr = {};
+                broadcast_addr.sin_family = AF_INET;
+                broadcast_addr.sin_port = htons(this->server_communication_port);
+                inet_pton(AF_INET, BROADCAST_ADDR, &broadcast_addr.sin_addr);
+                Message coordinator_msg = {Type::COORDINATOR, 0, 0};
+                sendto(this->server_socket, &coordinator_msg, sizeof(coordinator_msg), 0, (struct sockaddr *)&broadcast_addr, sizeof(broadcast_addr));
+                
+                continue; 
+            }
+        }
+        
+        // 2. LÓGICA DE ESPERA POR COORDENADOR
+        if (this->current_state == ServerState::WAITING_FOR_COORDINATOR) {
+            const int WAIT_FOR_LEADER_TIMEOUT_SEC = 7;
+            if (chrono::duration_cast<chrono::seconds>(chrono::steady_clock::now() - this->election_start_time).count() > WAIT_FOR_LEADER_TIMEOUT_SEC) {
+                 log_with_timestamp("[" + my_ip + "] Timeout! Nenhum coordenador se anunciou. Iniciando nova eleição.");
+                 this->current_state = ServerState::NORMAL;
+                 startElection();
+            }
+        }
+
+        // 3. PROCESSAMENTO DE MENSAGENS (NÃO-BLOQUEANTE)
+        setSocketTimeout(this->server_socket, 0); 
         Message msg;
         struct sockaddr_in from_addr;
         socklen_t from_len = sizeof(from_addr);
 
-        if (recvfrom(server_socket, &msg, sizeof(msg), 0, (struct sockaddr *)&from_addr, &from_len) > 0) {
+        if (recvfrom(server_socket, &msg, sizeof(msg), MSG_DONTWAIT, (struct sockaddr *)&from_addr, &from_len) > 0) {
             string from_ip = inet_ntoa(from_addr.sin_addr);
-            if (from_ip == this->my_ip) continue;
-
-            if (from_ip == this->leader_ip) this->last_heartbeat_time = chrono::steady_clock::now();
-            
-            switch (msg.type) {
-                case Type::HEARTBEAT:
-                case Type::I_AM_ALIVE:
-                     if(from_ip == this->leader_ip) this->last_heartbeat_time = chrono::steady_clock::now();
-                     break;
-                // ======================================================================
-                // CORREÇÃO DA REGRESSÃO: Re-implementar o case REPLICATION_UPDATE
-                // ======================================================================
-                case Type::REPLICATION_UPDATE:
-                    if (from_ip == this->leader_ip) {
-                        log_with_timestamp("[" + my_ip + "] [BACKUP] Recebi REPLICATION_UPDATE.");
-                        
-                        struct in_addr original_client_addr;
-                        original_client_addr.s_addr = msg.ip_addr;
-                        string client_ip_str = inet_ntoa(original_client_addr);
-                        setParticipantState(client_ip_str, msg.seq, msg.num, msg.total_sum, msg.total_reqs);
-                        {
-                            lock_guard<mutex> lock_sum(sumMutex);
-                            this->sumTotal.sum = msg.total_sum_server;
-                            this->sumTotal.num_reqs = msg.total_reqs_server;
+            if (from_ip != my_ip) {
+                if (from_ip == this->leader_ip) this->last_heartbeat_time = chrono::steady_clock::now();
+                switch (msg.type) {
+                    case Type::OK_ANSWER:
+                        if (current_state == ServerState::ELECTION_RUNNING) {
+                            log_with_timestamp("[" + my_ip + "] Recebi OK_ANSWER de " + from_ip + ". Perdi a eleição.");
+                            current_state = ServerState::WAITING_FOR_COORDINATOR;
+                            this->election_start_time = chrono::steady_clock::now();
                         }
-                        
-                        // Imprime o estado atualizado para verificação
-                        printParticipants(client_ip_str);
-                        
-                        Message ack_msg = {Type::REPLICATION_ACK, 0, msg.seq};
-                        sendto(server_socket, &ack_msg, sizeof(ack_msg), 0, (struct sockaddr *)&from_addr, from_len);
-                    }
-                    break;
-                case Type::ELECTION:
-                    handleElectionMessage(from_addr);
-                    break;
-                case Type::COORDINATOR:
-                    handleCoordinatorMessage(from_addr);
-                    break;
-                default:
-                    break;
+                        break;
+                    case Type::COORDINATOR:
+                        handleCoordinatorMessage(from_addr);
+                        break;
+                    case Type::ELECTION:
+                        handleElectionMessage(from_addr);
+                        break;
+                    case Type::HEARTBEAT:
+                    case Type::I_AM_ALIVE:
+                         if(from_ip == this->leader_ip) this->last_heartbeat_time = chrono::steady_clock::now();
+                         break;
+                    case Type::REPLICATION_UPDATE:
+                        if (from_ip == this->leader_ip) {
+                            log_with_timestamp("[" + my_ip + "] [BACKUP] Recebi REPLICATION_UPDATE do líder.");
+                            struct in_addr original_client_addr;
+                            original_client_addr.s_addr = msg.ip_addr;
+                            string client_ip_str = inet_ntoa(original_client_addr);
+                            setParticipantState(client_ip_str, msg.seq, msg.num, msg.total_sum, msg.total_reqs);
+                            {
+                                lock_guard<mutex> lock_sum(sumMutex);
+                                this->sumTotal.sum = msg.total_sum_server;
+                                this->sumTotal.num_reqs = msg.total_reqs_server;
+                            }
+                            printParticipants(client_ip_str);
+                            Message ack_msg = {Type::REPLICATION_ACK, 0, msg.seq};
+                            sendto(server_socket, &ack_msg, sizeof(ack_msg), 0, (struct sockaddr *)&from_addr, from_len);
+                        }
+                        break;
+                    default:
+                        break;
+                }
             }
         }
 
+        // 4. VERIFICA SE UMA ELEIÇÃO FOI SOLICITADA
         if (this->election_requested) {
-            this->election_requested = false;
+            this->election_requested = false; 
             startElection();
         }
 
-        this_thread::sleep_for(chrono::milliseconds(10));
+        this_thread::sleep_for(chrono::milliseconds(20));
     }
 
     failure_detection_thread.join();
