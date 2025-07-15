@@ -20,6 +20,15 @@
 
 using namespace std;
 
+
+void log_with_timestamp(const string &message) {
+    time_t now = time(0);
+    char timestamp[100];
+    strftime(timestamp, sizeof(timestamp), "%Y-%m-%d %H:%M:%S", localtime(&now));
+    cout << timestamp << " " << message << endl;
+}
+
+
 Client::Client(int Discovery_Port) {
 
 }
@@ -40,7 +49,7 @@ string Client::discoverServer(int Discovery_Port, int Request_Port) {
     Message message = {Type::DESC, 0, 0}; 
     int attempts = 0;
 
-    struct sockaddr_in bcastAddr;
+    //struct sockaddr_in bcastAddr;
     broadcastAddr.sin_family = AF_INET;
     broadcastAddr.sin_port = htons(Discovery_Port);
     inet_pton(AF_INET, BROADCAST_ADDR, &broadcastAddr.sin_addr);
