@@ -46,6 +46,7 @@ private:
     atomic<ServerState> current_state; 
     std::atomic<bool> election_requested;
     chrono::steady_clock::time_point last_heartbeat_time;
+    chrono::steady_clock::time_point election_start_time;
     
     void findLeaderOrCreateGroup();
     void runAsLeader();
