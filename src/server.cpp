@@ -406,21 +406,25 @@ void Server::runAsBackup() {
             const int ELECTION_TIMEOUT_SEC = 4;
             if (chrono::duration_cast<chrono::seconds>(chrono::steady_clock::now() - this->election_start_time).count() > ELECTION_TIMEOUT_SEC) {
                 log_with_timestamp("[" + my_ip + "] Timeout da eleição atingido. Venci e me torno o novo líder!");
+
+                log_with_timestamp("[" + my_ip + "] Pausa pós-eleição para estabilização da rede...");
+                this_thread::sleep_for(chrono::milliseconds(500)); // Meio segundo de calma
+                
                 this->role = ServerRole::LEADER;
                 this->leader_ip = this->my_ip;
                 this->current_state = ServerState::NORMAL;
 
                 // ########## CORREÇÃO: Anúncio Híbrido (Broadcast + Unicast) ##########
                 log_with_timestamp("[" + my_ip + "] Anunciando minha liderança para a rede...");
+                Message coordinator_msg = {Type::COORDINATOR, 0, 0};
                 
                 struct sockaddr_in broadcast_addr = {};
                 broadcast_addr.sin_family = AF_INET;
                 broadcast_addr.sin_port = htons(this->server_communication_port);
                 inet_pton(AF_INET, BROADCAST_ADDR, &broadcast_addr.sin_addr);
-                Message coordinator_msg = {Type::COORDINATOR, 0, 0};
                 for (int i = 0; i < 5; ++i) {
                     sendto(this->server_socket, &coordinator_msg, sizeof(coordinator_msg), 0, (struct sockaddr *)&broadcast_addr, sizeof(broadcast_addr));
-                    this_thread::sleep_for(chrono::milliseconds(200));
+                    this_thread::sleep_for(chrono::milliseconds(250));
                 }
 
                 // 2. Unicast para todos os servidores conhecidos
