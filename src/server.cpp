@@ -483,11 +483,13 @@ void Server::runAsBackup() {
                         handleElectionMessage(from_addr);
                         break;
                     case Type::HEARTBEAT:
-                        if(from_ip == this->leader_ip) {
+                        // Aceite a mensagem se o remetente tiver um IP maior ou igual
+                        // ao do líder que conhecemos (se houver).
+                        if (this->leader_ip.empty() || ipToInt(from_ip) >= ipToInt(this->leader_ip)) {
+                            log_with_timestamp("[" + my_ip + "] Aceitando " + from_ip + " como novo líder via " + (msg.type == Type::HEARTBEAT ? "HEARTBEAT" : "COORDINATOR") + ".");
+                            this->leader_ip = from_ip;
+                            this->current_state = ServerState::NORMAL;
                             this->last_heartbeat_time = chrono::steady_clock::now();
-                            // Responde ao heartbeat para que o líder saiba que estamos vivos
-                            Message ack_msg = {Type::SERVER_DISCOVERY, 0, 0}; // Reutiliza a msg de descoberta como um "presente"
-                            sendto(this->server_socket, &ack_msg, sizeof(ack_msg), 0, (struct sockaddr *)&from_addr, from_len);
                         }
                         break;
                     case Type::I_AM_ALIVE:
