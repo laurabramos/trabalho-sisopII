@@ -437,10 +437,128 @@ void Server::handleClientDiscovery(const struct sockaddr_in &fromAddr)
         participants.push_back({clientIP, 0, 0, 0});
     }
 }
-bool Server::replicateToBackups(const Message&, const struct sockaddr_in&, const tableClient&, const tableAgregation&) { return true; }
-void Server::setParticipantState(const std::string&, uint32_t, uint32_t, uint64_t, uint32_t) { /* ... */ }
-void Server::printParticipants(const std::string &clientIP) { /* ... */ }
-void Server::printRepet(const std::string &clientIP, uint32_t duplicate_seq) { /* ... */ }
+bool Server::replicateToBackups(const Message& client_request, const struct sockaddr_in& client_addr, const tableClient& client_state, const tableAgregation& server_state)
+{
+    std::vector<ServerInfo> backups_to_notify;
+    {
+        lock_guard<mutex> lock(serverListMutex);
+        if (server_list.empty()) {
+            cout << "nao tem ninguém" << endl;
+            return true; // Sucesso, pois não há backups para replicar.
+        }
+        cout << "tem alguem hehehe" << endl;
+        backups_to_notify = this->server_list;
+    }
+
+    log_with_timestamp("[" + my_ip + "] [LEADER] Iniciando replicação síncrona, um por um, para " + to_string(backups_to_notify.size()) + " backup(s)...");
+    Message replication_msg = client_request;
+    replication_msg.type = Type::REPLICATION_UPDATE;
+    replication_msg.ip_addr = client_addr.sin_addr.s_addr;
+    replication_msg.total_sum = client_state.last_sum;
+    replication_msg.total_reqs = client_state.last_req;
+    replication_msg.total_sum_server = server_state.sum;
+    replication_msg.total_reqs_server = server_state.num_reqs;
+    setSocketTimeout(this->server_socket, 2); // Timeout de 2 segundos por resposta
+
+    int successful_acks = 0;
+    for (const auto& backup_info : backups_to_notify) {
+        log_with_timestamp("[" + my_ip + "] [LEADER] Replicando para o backup " + backup_info.ip_address + "...");
+
+        struct sockaddr_in dest_addr = {};
+        dest_addr.sin_family = AF_INET;
+        dest_addr.sin_port = htons(this->server_communication_port);
+        dest_addr.sin_addr.s_addr = inet_addr(backup_info.ip_address.c_str());
+
+        bool ack_received = false;
+        const int MAX_ATTEMPTS = 1; 
+
+        for (int attempt = 0; attempt < MAX_ATTEMPTS && !ack_received; ++attempt) {
+            sendto(this->server_socket, &replication_msg, sizeof(replication_msg), 0, (struct sockaddr *)&dest_addr, sizeof(dest_addr));
+
+            Message response;
+            struct sockaddr_in from_addr;
+            socklen_t from_len = sizeof(from_addr);
+
+            if (recvfrom(this->server_socket, &response, sizeof(response), 0, (struct sockaddr*)&from_addr, &from_len) > 0) {
+                if (response.type == Type::REPLICATION_ACK &&
+                    from_addr.sin_addr.s_addr == dest_addr.sin_addr.s_addr &&
+                    response.seq == client_request.seq)
+                {
+                    ack_received = true;
+                }
+            } else {
+                // recvfrom retornou -1 (timeout) ou erro
+                log_with_timestamp("[" + my_ip + "] [LEADER] AVISO: Timeout esperando ACK de " + backup_info.ip_address + " (tentativa " + to_string(attempt + 1) + ")");
+            }
+        }
+
+        if (ack_received) {
+            successful_acks++;
+            log_with_timestamp("[" + my_ip + "] [LEADER] ACK recebido de " + backup_info.ip_address);
+        } else {
+            log_with_timestamp("[" + my_ip + "] [LEADER] ERRO: Backup " + backup_info.ip_address + " não respondeu após " + to_string(MAX_ATTEMPTS) + " tentativas. Pode estar offline.");
+        }
+    } 
+    setSocketTimeout(this->server_socket, 0);
+
+    log_with_timestamp("[" + my_ip + "] [LEADER] Replicação concluída. Sucesso para " + to_string(successful_acks) + "/" + to_string(backups_to_notify.size()) + " backups.");
+
+    return true; 
+}
+
+void Server::setParticipantState(const std::string& clientIP, uint32_t seq, uint32_t value, uint64_t client_sum, uint32_t client_reqs)
+{
+    lock_guard<mutex> lock(participantsMutex);
+    for (auto &p : participants) {
+        if (p.address == clientIP) {
+            p.last_sum = client_sum;
+            p.last_req = client_reqs; // O backup agora armazena o mesmo que o líder
+            p.last_value = value;
+            return;
+        }
+    }
+    participants.push_back({clientIP, client_reqs, client_sum, value});
+}
+
+void Server::printParticipants(const std::string &clientIP)
+{
+    lock_guard<mutex> lock_participants(participantsMutex);
+    lock_guard<mutex> lock_sum(sumMutex);
+
+    for (const auto &p : participants)
+    {
+        if (p.address == clientIP)
+        {
+            string msg = " client " + p.address +
+                         " id_req " + to_string(p.last_req) +
+                         " value " + to_string(p.last_value) +
+                         " num_reqs " + to_string(sumTotal.num_reqs) +
+                         " total_sum " + to_string(sumTotal.sum);
+            log_with_timestamp(msg);
+            return;
+        }
+    }
+}
+
+void Server::printRepet(const std::string &clientIP, uint32_t duplicate_seq)
+{
+    lock_guard<mutex> lock_participants(participantsMutex);
+    lock_guard<mutex> lock_sum(sumMutex);
+
+    for (const auto &p : participants)
+    {
+        if (p.address == clientIP)
+        {
+            string msg = " client " + p.address +
+                         " DUP !! Tentativa de id_req " + to_string(duplicate_seq) +
+                         ". Último id_req válido: " + to_string(p.last_req) +
+                         " | num_reqs " + to_string(sumTotal.num_reqs) +
+                         " total_sum " + to_string(sumTotal.sum);
+            log_with_timestamp(msg);
+            return;
+        }
+    }
+}
 
 bool Server::isDuplicateRequest(const string &clientIP, uint32_t seq) {
     lock_guard<mutex> lock(participantsMutex);
