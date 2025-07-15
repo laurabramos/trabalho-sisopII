@@ -8,16 +8,20 @@
 #include <thread>
 #include <mutex>
 #include <chrono>
-#include <atomic> // ALTERAÇÃO: Adicionado para std::atomic
+#include <atomic>
 
 using namespace std;
 
-// ALTERAÇÃO: Estado do servidor para uma máquina de estados mais robusta.
-// Isso previne condições de corrida e loops de eleição.
+// CORREÇÃO: Reintroduzida a definição de ServerRole.
+enum class ServerRole {
+    LEADER,
+    BACKUP
+};
+
 enum class ServerState {
-    NORMAL,                 // Operando normalmente como LÍDER ou BACKUP.
-    ELECTION_RUNNING,       // Ativamente conduzindo uma eleição que ele mesmo iniciou.
-    WAITING_FOR_COORDINATOR // Perdeu uma eleição e está aguardando o novo líder se anunciar.
+    NORMAL,
+    ELECTION_RUNNING,
+    WAITING_FOR_COORDINATOR
 };
 
 class Server : public Nodo {
@@ -35,11 +39,10 @@ private:
     int server_socket;
     int client_socket;
 
-    ServerRole role;
+    ServerRole role; // Agora o tipo 'ServerRole' é conhecido.
     string my_ip;
     string leader_ip;
 
-    // ALTERAÇÃO: Substituído o 'bool election_in_progress' por um estado atômico mais seguro.
     atomic<ServerState> current_state; 
     chrono::steady_clock::time_point last_heartbeat_time;
     
@@ -50,7 +53,7 @@ private:
     void sendHeartbeats();
     void checkForLeaderFailure();
     void startElection();
-    void waitForNewLeader(); // ALTERAÇÃO: Nova função para o estado de espera pós-eleição.
+    void waitForNewLeader();
     void handleElectionMessage(const struct sockaddr_in& fromAddr);
     void handleCoordinatorMessage(const struct sockaddr_in& fromAddr);
     void listenForServerMessages();
