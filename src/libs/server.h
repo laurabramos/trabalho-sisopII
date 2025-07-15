@@ -10,7 +10,7 @@
 #include <chrono>
 #include <atomic>
 
-// Papel atual do servidor no cluster
+// Papel do servidor: simplificado.
 enum class ServerRole {
     LEADER,
     BACKUP,
@@ -52,9 +52,8 @@ private:
 
     // Handlers de mensagens específicas
     void handleServerDiscovery(const struct sockaddr_in& fromAddr);
-    void handleElectionMessage(const struct sockaddr_in& fromAddr);
     
-    // Funções de negócio e replicação (a implementar/rever depois)
+    // Funções de negócio e replicação
     void handleClientDiscovery(const struct sockaddr_in& fromAddr);
     bool isDuplicateRequest(const std::string& clientIP, uint32_t seq);
     tableClient updateParticipant(const std::string& clientIP, uint32_t seq, uint32_t num);
@@ -62,6 +61,8 @@ private:
     void printParticipants(const std::string& clientIP);
     void printRepet(const std::string& clientIP, uint32_t duplicate_seq);
     bool checkList(const std::string& ip);
+    bool replicateToBackups(const Message& client_request, const struct sockaddr_in& client_addr, const tableClient& client_state, const tableAgregation& server_state);
+    void setParticipantState(const std::string& clientIP, uint32_t seq, uint32_t value, uint64_t client_sum, uint32_t client_reqs);
 };
 
 #endif // SERVER_H
