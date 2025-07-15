@@ -170,7 +170,7 @@ void Server::startElection() {
     sendto(this->server_socket, &election_msg, sizeof(election_msg), 0, (struct sockaddr *)&broadcast_addr, sizeof(broadcast_addr));
 
     bool got_objection = false; 
-    const int ELECTION_TIMEOUT_SEC = 2;
+    const int ELECTION_TIMEOUT_SEC = 4;
     auto election_start_time = chrono::steady_clock::now();
     setSocketTimeout(this->server_socket, ELECTION_TIMEOUT_SEC);
 
