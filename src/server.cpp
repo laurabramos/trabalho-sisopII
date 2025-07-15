@@ -95,10 +95,17 @@ void Server::handleElectionMessage(const struct sockaddr_in &fromAddr) {
 
 void Server::handleCoordinatorMessage(const struct sockaddr_in &fromAddr) {
     string new_leader_ip = inet_ntoa(fromAddr.sin_addr);
-    log_with_timestamp("[" + my_ip + "] Recebi COORDINATOR de " + new_leader_ip);
+    
+    // Ignora se o novo líder anunciado for inferior a um líder que já conhecemos
+    if (!this->leader_ip.empty() && ipToInt(new_leader_ip) < ipToInt(this->leader_ip)) {
+        return;
+    }
+
+    log_with_timestamp("[" + my_ip + "] Recebi COORDINATOR de " + new_leader_ip + ". Aceitando como novo líder.");
     this->leader_ip = new_leader_ip;
     this->current_state = ServerState::NORMAL; 
     this->last_heartbeat_time = chrono::steady_clock::now();
+    this->election_requested = false;
 
     if (this->leader_ip == this->my_ip) {
         this->role = ServerRole::LEADER;
