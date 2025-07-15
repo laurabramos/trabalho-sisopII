@@ -98,6 +98,15 @@ void Server::handleElectionMessage(const struct sockaddr_in &fromAddr) {
         this_thread::sleep_for(chrono::milliseconds(50));
         
         this->election_requested = true; 
+
+        // ########## CORREÇÃO PARA A CONDIÇÃO DE CORRIDA ##########
+        // Se eu já estou numa eleição, e um nó menor me desafia, isso é
+        // um sinal de que a rede está instável. Reiniciar meu cronómetro
+        // me dá mais tempo e evita que eu me declare líder prematuramente.
+        if (this->current_state == ServerState::ELECTION_RUNNING) {
+            log_with_timestamp("[" + my_ip + "] Estava em eleição, reiniciando meu timer devido a novo desafio.");
+            this->election_start_time = chrono::steady_clock::now();
+        }
     }
 }
 
@@ -369,6 +378,11 @@ void Server::checkForLeaderFailure() {
             Message challenge_msg = {Type::ARE_YOU_ALIVE, 0, 0};
             sendto(this->server_socket, &challenge_msg, sizeof(challenge_msg), 0, (struct sockaddr *)&leader_addr, sizeof(leader_addr));
             this_thread::sleep_for(chrono::milliseconds(CHALLENGE_TIMEOUT_MSEC));
+
+            if (this->leader_ip.empty() || this->leader_ip == this->my_ip) {
+            this_thread::sleep_for(chrono::seconds(1));
+            continue;
+            }
 
             if (chrono::duration_cast<chrono::seconds>(chrono::steady_clock::now() - last_heartbeat_time).count() > HEARTBEAT_TIMEOUT_SEC) {
                 log_with_timestamp("[" + my_ip + "] Desafio não respondido. Líder considerado morto.");
