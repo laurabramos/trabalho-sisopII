@@ -226,11 +226,17 @@ void Server::waitForNewLeader() {
     setSocketTimeout(this->server_socket, 0);
 }
 
+// Funções de Papel (Leader, Backup)
 void Server::runAsLeader() {
     log_with_timestamp("ASSUMINDO PAPEL DE LÍDER.");
-    serverListMutex.lock();
-    server_list.clear();
-    serverListMutex.unlock();
+    
+    // ======================================================================
+    // CORREÇÃO #1: NÃO limpar a lista de servidores aqui.
+    // Os servidores descobertos durante a eleição precisam ser mantidos.
+    // ======================================================================
+    // serverListMutex.lock();
+    // server_list.clear();
+    // serverListMutex.unlock();
 
     if (this->server_socket == -1) this->server_socket = createSocket(this->server_communication_port);
     if (this->client_socket == -1) this->client_socket = createSocket(this->client_discovery_port);
