@@ -280,6 +280,9 @@ void Server::listenForServerMessages() {
                         this->role = ServerRole::BACKUP;
                         this->current_state = ServerState::WAITING_FOR_COORDINATOR;
                         this->election_start_time = chrono::steady_clock::now();
+                    } else {
+                         Message response_msg = {Type::COORDINATOR, 0, 0};
+                         sendto(this->server_socket, &response_msg, sizeof(response_msg), 0, (struct sockaddr *)&from_addr, sizeof(from_addr));
                     }
                     break;
                 }
@@ -287,7 +290,6 @@ void Server::listenForServerMessages() {
                      // Um líder precisa reagir se outro (com IP maior) se declarar líder
                      handleCoordinatorMessage(from_addr);
                      break;
-                }
                 case Type::ARE_YOU_ALIVE: {
                     Message response_msg = {Type::I_AM_ALIVE, 0, 0};
                     sendto(this->server_socket, &response_msg, sizeof(response_msg), 0, (struct sockaddr *)&from_addr, sizeof(from_addr));
@@ -445,7 +447,8 @@ void Server::runAsBackup() {
                         }
                         break;
                     case Type::I_AM_ALIVE:
-                         if(from_ip == this->leader_ip) this->last_heartbeat_time = chrono::steady_clock::now();
+                         if(from_ip == this->leader_ip) 
+                             this->last_heartbeat_time = chrono::steady_clock::now();
                          break;
                     case Type::REPLICATION_UPDATE:
                         if (from_ip == this->leader_ip) {
