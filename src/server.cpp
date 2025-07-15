@@ -154,15 +154,21 @@ void Server::findLeaderOrCreateGroup() {
             string from_ip = inet_ntoa(from_addr.sin_addr);
             if (from_ip == my_ip) continue;
             
-            if (response.type == Type::SERVER_DISCOVERY_ACK || response.type == Type::HEARTBEAT || response.type == Type::COORDINATOR) {
-                if (ipToInt(from_ip) > ipToInt(this->leader_ip)) { // Aceita apenas líderes com IP maior, se já tiver um
+            // ########## CORREÇÃO IMPORTANTE ##########
+            // Um HEARTBEAT ou COORDINATOR define o líder.
+            if (response.type == Type::HEARTBEAT || response.type == Type::COORDINATOR) {
+                if (ipToInt(from_ip) > ipToInt(this->leader_ip)) {
                     this->leader_ip = from_ip;
+                    log_with_timestamp("[" + my_ip + "] Líder " + from_ip + " detectado via " + (response.type == Type::HEARTBEAT ? "HEARTBEAT" : "COORDINATOR") + ".");
                 }
-            } else if (response.type == Type::SERVER_DISCOVERY) {
+            } 
+            // Uma resposta de descoberta ou um anúncio de outro servidor adiciona-o à lista.
+            // Isso garante que mesmo que não saibamos quem é o líder, sabemos que não estamos sozinhos.
+            else if (response.type == Type::SERVER_DISCOVERY_ACK || response.type == Type::SERVER_DISCOVERY) {
                  lock_guard<mutex> lock(serverListMutex);
                  if (!checkList(from_ip)) {
-                    server_list.push_back({from_ip});
-                    log_with_timestamp("[" + my_ip + "] Servidor " + from_ip + " detectado durante a descoberta.");
+                     server_list.push_back({from_ip});
+                     log_with_timestamp("[" + my_ip + "] Servidor " + from_ip + " detectado durante a descoberta.");
                  }
             }
         }
@@ -175,7 +181,9 @@ void Server::findLeaderOrCreateGroup() {
         return;
     }
     
-    log_with_timestamp("[" + my_ip + "] Fase de descoberta encerrada. Nenhum líder encontrado. Iniciando eleição...");
+    // Se não encontrou um líder, mas encontrou outros servidores, inicia uma eleição adequada.
+    // Se não encontrou ninguém, também inicia uma eleição (e vai ganhar).
+    log_with_timestamp("[" + my_ip + "] Fase de descoberta encerrada. Nenhum líder ativo encontrado. Iniciando eleição...");
     startElection();
 }
 
@@ -398,8 +406,10 @@ void Server::runAsBackup() {
                 broadcast_addr.sin_port = htons(this->server_communication_port);
                 inet_pton(AF_INET, BROADCAST_ADDR, &broadcast_addr.sin_addr);
                 Message coordinator_msg = {Type::COORDINATOR, 0, 0};
-                sendto(this->server_socket, &coordinator_msg, sizeof(coordinator_msg), 0, (struct sockaddr *)&broadcast_addr, sizeof(broadcast_addr));
-                
+                for (int i = 0; i < 3; ++i) {
+                    sendto(this->server_socket, &coordinator_msg, sizeof(coordinator_msg), 0, (struct sockaddr *)&broadcast_addr, sizeof(broadcast_addr));
+                    this_thread::sleep_for(chrono::milliseconds(200));
+                }                
                 continue; 
             }
         }
