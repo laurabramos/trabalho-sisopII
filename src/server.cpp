@@ -365,7 +365,7 @@ void Server::checkForLeaderFailure() {
 
     while (this->role == ServerRole::BACKUP) {
         this_thread::sleep_for(chrono::seconds(1));
-        if (this->current_state != ServerState::NORMAL) continue;
+        if (this->current_state != ServerState::NORMAL|| this->leader_ip.empty()||this->leader_ip == this->my_ip) continue;
 
         if (chrono::duration_cast<chrono::seconds>(chrono::steady_clock::now() - last_heartbeat_time).count() > HEARTBEAT_TIMEOUT_SEC) {
             log_with_timestamp("[" + my_ip + "] Líder (" + leader_ip + ") inativo. Desafiando...");
@@ -378,11 +378,6 @@ void Server::checkForLeaderFailure() {
             Message challenge_msg = {Type::ARE_YOU_ALIVE, 0, 0};
             sendto(this->server_socket, &challenge_msg, sizeof(challenge_msg), 0, (struct sockaddr *)&leader_addr, sizeof(leader_addr));
             this_thread::sleep_for(chrono::milliseconds(CHALLENGE_TIMEOUT_MSEC));
-
-            if (this->leader_ip.empty() || this->leader_ip == this->my_ip) {
-            this_thread::sleep_for(chrono::seconds(1));
-            continue;
-            }
 
             if (chrono::duration_cast<chrono::seconds>(chrono::steady_clock::now() - last_heartbeat_time).count() > HEARTBEAT_TIMEOUT_SEC) {
                 log_with_timestamp("[" + my_ip + "] Desafio não respondido. Líder considerado morto.");
@@ -414,6 +409,11 @@ void Server::runAsBackup() {
                 this->role = ServerRole::LEADER;
                 this->leader_ip = this->my_ip;
                 this->current_state = ServerState::NORMAL;
+
+                // ########## CORREÇÃO: Anúncio Híbrido (Broadcast + Unicast) ##########
+                log_with_timestamp("[" + my_ip + "] Anunciando minha liderança para a rede...");
+                Message coordinator_msg = {Type::COORDINATOR, 0, 0};
+
                 
                 struct sockaddr_in broadcast_addr = {};
                 broadcast_addr.sin_family = AF_INET;
@@ -423,7 +423,25 @@ void Server::runAsBackup() {
                 for (int i = 0; i < 5; ++i) {
                     sendto(this->server_socket, &coordinator_msg, sizeof(coordinator_msg), 0, (struct sockaddr *)&broadcast_addr, sizeof(broadcast_addr));
                     this_thread::sleep_for(chrono::milliseconds(200));
-                }                
+                }
+
+                // 2. Unicast para todos os servidores conhecidos
+                std::vector<ServerInfo> servers_to_notify;
+                {
+                    lock_guard<mutex> lock(serverListMutex);
+                    servers_to_notify = this->server_list;
+                }
+
+                for (const auto& server : servers_to_notify) {
+                    if (server.ip_address != this->my_ip) {
+                        struct sockaddr_in dest_addr = {};
+                        dest_addr.sin_family = AF_INET;
+                        dest_addr.sin_port = htons(this->server_communication_port);
+                        inet_pton(AF_INET, server.ip_address.c_str(), &dest_addr.sin_addr);
+                        sendto(this->server_socket, &coordinator_msg, sizeof(coordinator_msg), 0, (struct sockaddr *)&dest_addr, sizeof(dest_addr));
+                    }
+                }
+                
                 continue; 
             }
         }
