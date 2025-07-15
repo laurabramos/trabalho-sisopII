@@ -486,32 +486,32 @@ void Server::runAsBackup() {
 }
 
 // Funções restantes (utilitárias, de impressão e de negócio)
+// Esta é a versão da função com a formatação corrigida (sem caracteres invisíveis)
 void Server::receiveNumbers() {
-    int numSocket = createSocket(this->client_request_port);
-    if (numSocket == -1) {
-        log_with_timestamp("[" + my_ip + "] Falha ao criar socket de requisições. A thread será encerrada.");
-        return;
-    }
- 
+    int numSocket = createSocket(this->client_request_port);
+    if (numSocket == -1) {
+        log_with_timestamp("[" + my_ip + "] Falha ao criar socket de requisições. A thread será encerrada.");
+        return;
+    }
+
     // O loop agora é infinito, pois esta thread serve tanto o LÍDER quanto o BACKUP.
-    while (true) { 
-        Message number;
-        struct sockaddr_in clientAddr;
-        socklen_t clientLen = sizeof(clientAddr);
+    while (true) { 
+        Message number;
+        struct sockaddr_in clientAddr;
+        socklen_t clientLen = sizeof(clientAddr);
         // Usar um timeout pequeno ou nenhuma flag de bloqueio é bom para não prender a thread
-        int received = recvfrom(numSocket, &number, sizeof(Message), 0, (struct sockaddr*)&clientAddr, &clientLen);
-     
-        if (received > 0 && number.type == Type::REQ) {
-            if (this->role == ServerRole::LEADER) {
-                // LÓGICA DO LÍDER: Processa, replica e responde. (Como estava antes)
-                string clientIP = inet_ntoa(clientAddr.sin_addr);
-                if (isDuplicateRequest(clientIP, number.seq)) {
-                    printRepet(clientIP, number.seq);
-                } else {
-                    tableClient clientState = updateParticipant(clientIP, number.seq, number.num);
-                    updateSumTable(number.seq, number.num);
-                    printParticipants(clientIP);
-                    // ... (resto da lógica de replicação e resposta REQ_ACK)
+        int received = recvfrom(numSocket, &number, sizeof(Message), 0, (struct sockaddr*)&clientAddr, &clientLen);
+    
+        if (received > 0 && number.type == Type::REQ) {
+            if (this->role == ServerRole::LEADER) {
+                // LÓGICA DO LÍDER: Processa, replica e responde. (Como estava antes)
+                string clientIP = inet_ntoa(clientAddr.sin_addr);
+                if (isDuplicateRequest(clientIP, number.seq)) {
+                    printRepet(clientIP, number.seq);
+                } else {
+                    tableClient clientState = updateParticipant(clientIP, number.seq, number.num);
+                    updateSumTable(number.seq, number.num);
+                    printParticipants(clientIP);
                     tableAgregation server_state_copy;
                     {
                         lock_guard<mutex> lock(sumMutex);
@@ -520,22 +520,22 @@ void Server::receiveNumbers() {
                     replicateToBackups(number, clientAddr, clientState, server_state_copy);
                     Message confirmation = {Type::REQ_ACK, number.seq, clientState.last_req, clientState.last_sum};
                     sendto(numSocket, &confirmation, sizeof(Message), 0, (struct sockaddr *)&clientAddr, clientLen);
-                }
-            } else {
-                // LÓGICA DO BACKUP: Redireciona o cliente.
-                log_with_timestamp("["+ my_ip +"] [BACKUP] Recebi REQ, redirecionando cliente para o líder " + this->leader_ip);
-                Message redirect_msg = {Type::NOT_LEADER};
+                }
+            } else {
+                // LÓGICA DO BACKUP: Redireciona o cliente.
+                log_with_timestamp("["+ my_ip +"] [BACKUP] Recebi REQ, redirecionando cliente para o líder " + this->leader_ip);
+                Message redirect_msg = {Type::NOT_LEADER};
                 if (!this->leader_ip.empty()) {
                     inet_pton(AF_INET, this->leader_ip.c_str(), &redirect_msg.ip_addr);
                 }
-                sendto(numSocket, &redirect_msg, sizeof(Message), 0, (struct sockaddr *)&clientAddr, clientLen);
-            }
-        } else {
+                sendto(numSocket, &redirect_msg, sizeof(Message), 0, (struct sockaddr *)&clientAddr, clientLen);
+            }
+        } else {
             // Pequena pausa para não sobrecarregar a CPU se não houver mensagens
             this_thread::sleep_for(chrono::milliseconds(10));
         }
-    }
-    close(numSocket);
+    }
+    close(numSocket);
 }
 
 // As funções abaixo não precisaram de alterações na lógica principal de eleição
