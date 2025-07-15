@@ -412,8 +412,6 @@ void Server::runAsBackup() {
 
                 // ########## CORREÇÃO: Anúncio Híbrido (Broadcast + Unicast) ##########
                 log_with_timestamp("[" + my_ip + "] Anunciando minha liderança para a rede...");
-                Message coordinator_msg = {Type::COORDINATOR, 0, 0};
-
                 
                 struct sockaddr_in broadcast_addr = {};
                 broadcast_addr.sin_family = AF_INET;
