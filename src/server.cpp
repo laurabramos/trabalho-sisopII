@@ -406,7 +406,7 @@ void Server::runAsBackup() {
                 broadcast_addr.sin_port = htons(this->server_communication_port);
                 inet_pton(AF_INET, BROADCAST_ADDR, &broadcast_addr.sin_addr);
                 Message coordinator_msg = {Type::COORDINATOR, 0, 0};
-                for (int i = 0; i < 3; ++i) {
+                for (int i = 0; i < 5; ++i) {
                     sendto(this->server_socket, &coordinator_msg, sizeof(coordinator_msg), 0, (struct sockaddr *)&broadcast_addr, sizeof(broadcast_addr));
                     this_thread::sleep_for(chrono::milliseconds(200));
                 }                
@@ -416,7 +416,7 @@ void Server::runAsBackup() {
         
         // 2. LÓGICA DE ESPERA POR COORDENADOR
         if (this->current_state == ServerState::WAITING_FOR_COORDINATOR) {
-            const int WAIT_FOR_LEADER_TIMEOUT_SEC = 7;
+            const int WAIT_FOR_LEADER_TIMEOUT_SEC = 10;
             if (chrono::duration_cast<chrono::seconds>(chrono::steady_clock::now() - this->election_start_time).count() > WAIT_FOR_LEADER_TIMEOUT_SEC) {
                  log_with_timestamp("[" + my_ip + "] Timeout! Nenhum coordenador se anunciou. Iniciando nova eleição.");
                  this->current_state = ServerState::NORMAL;
