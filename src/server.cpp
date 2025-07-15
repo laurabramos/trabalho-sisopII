@@ -214,13 +214,6 @@ void Server::handleServerDiscovery(const struct sockaddr_in &fromAddr)
     }
 }
 
-uint32_t ipToInt(const std::string &ipStr)
-{
-    struct in_addr ip_addr;
-    inet_aton(ipStr.c_str(), &ip_addr);
-    return ntohl(ip_addr.s_addr);
-}
-
 void Server::handleElectionMessage(const struct sockaddr_in &fromAddr)
 {
     string challenger_ip = inet_ntoa(fromAddr.sin_addr);
