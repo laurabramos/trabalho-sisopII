@@ -224,11 +224,21 @@ void Server::listenForServerMessages() {
 void Server::handleServerDiscovery(const struct sockaddr_in &fromAddr) {
     string new_server_ip = inet_ntoa(fromAddr.sin_addr);
     
+    // Adiciona o novo servidor à lista, se ainda não estiver lá.
     lock_guard<mutex> lock(serverListMutex);
     if (!checkList(new_server_ip)) {
         server_list.push_back({new_server_ip});
         log_with_timestamp("[" + my_ip + "] Novo servidor " + new_server_ip + " adicionado à lista.");
     }
+
+    // =================== LÓGICA CRÍTICA ADICIONADA ===================
+    // Se eu sou o líder e o novo servidor tem um IP maior, eu devo
+    // ceder a liderança e forçar uma nova eleição.
+    if (this->role == ServerRole::LEADER && ipToInt(new_server_ip) > ipToInt(my_ip)) {
+        log_with_timestamp("[" + my_ip + "] Detectado servidor com IP maior (" + new_server_ip + "). Cedendo liderança.");
+        this->role = ServerRole::NEEDS_ELECTION; 
+    }
+    // ================================================================
 }
 
 void Server::receiveNumbers() {
