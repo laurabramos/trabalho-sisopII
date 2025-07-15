@@ -16,6 +16,7 @@ enum class Type : uint8_t {
     REQ,
     DESC_ACK,
     REQ_ACK,
+    NOT_LEADER,
 
     // Mensagens Servidor <-> Servidor (Descoberta e Replicação)
     SERVER_DISCOVERY,
