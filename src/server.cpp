@@ -37,6 +37,7 @@ Server::Server(int client_port, int req_port, int server_comm_port) {
     this->client_socket = -1;
     this->current_state = ServerState::NORMAL; 
     this->role = ServerRole::BACKUP;
+    this->election_requested = false;
 }
 
 Server::~Server() {
@@ -88,7 +89,7 @@ void Server::handleElectionMessage(const struct sockaddr_in &fromAddr) {
 
         this_thread::sleep_for(chrono::milliseconds(50));
         
-        startElection(); 
+        this->election_requested = true; 
     }
 }
 
