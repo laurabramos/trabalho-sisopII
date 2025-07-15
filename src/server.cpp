@@ -108,51 +108,61 @@ void Server::handleCoordinatorMessage(const struct sockaddr_in &fromAddr) {
 }
 
 void Server::findLeaderOrCreateGroup() {
-    log_with_timestamp("[" + my_ip + "] Procurando por um líder na rede...");
-
-    // ALTERAÇÃO: Adicionado atraso aleatório para evitar "tempestade de eleições" na inicialização.
-    random_device rd;
-    mt19937 gen(rd());
-    uniform_int_distribution<> distrib(100, 500);
-    this_thread::sleep_for(chrono::milliseconds(distrib(gen)));
-
+    log_with_timestamp("[" + my_ip + "] Fase de descoberta iniciada...");
     this->server_socket = createSocket(this->server_communication_port);
-    if (this->server_socket == -1) {
-        log_with_timestamp("Erro fatal ao criar socket de servidor.");
-        exit(1);
-    }
+    if (this->server_socket == -1) { exit(1); }
     setSocketBroadcastOptions(this->server_socket);
-    setSocketTimeout(this->server_socket, 2);
-
-    const int DISCOVERY_DURATION_SEC = 3;
-    auto discovery_start_time = chrono::steady_clock::now();
 
     struct sockaddr_in broadcast_addr = {};
     broadcast_addr.sin_family = AF_INET;
     broadcast_addr.sin_port = htons(this->server_communication_port);
     inet_pton(AF_INET, BROADCAST_ADDR, &broadcast_addr.sin_addr);
-    Message discovery_msg = {Type::SERVER_DISCOVERY, 0, 0};
-    
-    while (chrono::duration_cast<chrono::seconds>(chrono::steady_clock::now() - discovery_start_time).count() < DISCOVERY_DURATION_SEC) {
-        sendto(this->server_socket, &discovery_msg, sizeof(discovery_msg), 0, (struct sockaddr *)&broadcast_addr, sizeof(broadcast_addr));
 
+    // FASE 1: ANUNCIAR PRESENÇA (BROADCAST)
+    // Por 2 segundos, apenas envia mensagens de descoberta para que todos saibam quem está online.
+    log_with_timestamp("[" + my_ip + "] Anunciando presença na rede...");
+    auto broadcast_start_time = chrono::steady_clock::now();
+    while (chrono::duration_cast<chrono::seconds>(chrono::steady_clock::now() - broadcast_start_time).count() < 2) {
+        Message discovery_msg = {Type::SERVER_DISCOVERY, 0, 0};
+        sendto(this->server_socket, &discovery_msg, sizeof(discovery_msg), 0, (struct sockaddr *)&broadcast_addr, sizeof(broadcast_addr));
+        this_thread::sleep_for(chrono::milliseconds(250));
+    }
+
+    // FASE 2: ESCUTAR RESPOSTAS E OUTROS SERVIDORES
+    // Por 3 segundos, apenas escuta para descobrir líderes existentes ou outros servidores novos.
+    log_with_timestamp("[" + my_ip + "] Escutando por outros servidores e líderes...");
+    setSocketTimeout(this->server_socket, 3);
+    auto listen_start_time = chrono::steady_clock::now();
+    while (chrono::duration_cast<chrono::seconds>(chrono::steady_clock::now() - listen_start_time).count() < 3) {
         Message response;
         struct sockaddr_in from_addr;
         socklen_t from_len = sizeof(from_addr);
         if (recvfrom(this->server_socket, &response, sizeof(response), 0, (struct sockaddr *)&from_addr, &from_len) > 0) {
             string from_ip = inet_ntoa(from_addr.sin_addr);
-            if (from_ip != my_ip && response.type == Type::SERVER_DISCOVERY_ACK) {
-                 this->leader_ip = from_ip;
-                 this->role = ServerRole::BACKUP;
-                 log_with_timestamp("[" + my_ip + "] Líder existente encontrado em " + this->leader_ip + ". Tornando-me BACKUP.");
-                 setSocketTimeout(this->server_socket, 0);
-                 return;
+            if (from_ip == my_ip) continue;
+            
+            // Se um líder responder, torna-se backup e encerra a descoberta.
+            if (response.type == Type::SERVER_DISCOVERY_ACK || response.type == Type::HEARTBEAT) {
+                this->leader_ip = from_ip;
+                this->role = ServerRole::BACKUP;
+                log_with_timestamp("[" + my_ip + "] Líder existente encontrado em " + this->leader_ip + ". Tornando-me BACKUP.");
+                setSocketTimeout(this->server_socket, 0);
+                return;
+            }
+            // Se outro servidor novo se anunciar, adiciona à lista.
+            else if (response.type == Type::SERVER_DISCOVERY) {
+                 lock_guard<mutex> lock(serverListMutex);
+                 if (!checkList(from_ip)) {
+                    server_list.push_back({from_ip});
+                    log_with_timestamp("[" + my_ip + "] Servidor " + from_ip + " detectado durante a descoberta.");
+                 }
             }
         }
-        this_thread::sleep_for(chrono::milliseconds(500));
     }
-    
-    log_with_timestamp("[" + my_ip + "] Nenhum líder encontrado. Iniciando processo de eleição.");
+
+    // FASE 3: DECISÃO
+    // Se, após as duas fases, nenhum líder foi encontrado, inicia uma eleição.
+    log_with_timestamp("[" + my_ip + "] Fase de descoberta encerrada. Nenhum líder encontrado. Iniciando eleição...");
     setSocketTimeout(this->server_socket, 0);
     startElection();
 }
@@ -415,21 +425,19 @@ void Server::checkForLeaderFailure() {
 void Server::runAsBackup() {
     log_with_timestamp("[" + my_ip + "] Atuando como BACKUP. Líder: " + this->leader_ip);
     thread failure_detection_thread(&Server::checkForLeaderFailure, this);
-
-    // Garante que a flag de requisição de eleição esteja limpa no início.
     this->election_requested = false;
 
     while (this->role == ServerRole::BACKUP) {
-        // Usa um timeout curto para não bloquear o loop.
         setSocketTimeout(this->server_socket, 1); 
 
         Message msg;
         struct sockaddr_in from_addr;
         socklen_t from_len = sizeof(from_addr);
 
-        // 1. O loop verifica se há alguma mensagem chegando.
         if (recvfrom(server_socket, &msg, sizeof(msg), 0, (struct sockaddr *)&from_addr, &from_len) > 0) {
             string from_ip = inet_ntoa(from_addr.sin_addr);
+            if (from_ip == this->my_ip) continue;
+
             if (from_ip == this->leader_ip) this->last_heartbeat_time = chrono::steady_clock::now();
             
             switch (msg.type) {
@@ -437,11 +445,32 @@ void Server::runAsBackup() {
                 case Type::I_AM_ALIVE:
                      if(from_ip == this->leader_ip) this->last_heartbeat_time = chrono::steady_clock::now();
                      break;
+                // ======================================================================
+                // CORREÇÃO DA REGRESSÃO: Re-implementar o case REPLICATION_UPDATE
+                // ======================================================================
                 case Type::REPLICATION_UPDATE:
-                    // Lógica de replicação que já foi corrigida...
+                    if (from_ip == this->leader_ip) {
+                        log_with_timestamp("[" + my_ip + "] [BACKUP] Recebi REPLICATION_UPDATE.");
+                        
+                        struct in_addr original_client_addr;
+                        original_client_addr.s_addr = msg.ip_addr;
+                        string client_ip_str = inet_ntoa(original_client_addr);
+                        setParticipantState(client_ip_str, msg.seq, msg.num, msg.total_sum, msg.total_reqs);
+                        {
+                            lock_guard<mutex> lock_sum(sumMutex);
+                            this->sumTotal.sum = msg.total_sum_server;
+                            this->sumTotal.num_reqs = msg.total_reqs_server;
+                        }
+                        
+                        // Imprime o estado atualizado para verificação
+                        printParticipants(client_ip_str);
+                        
+                        Message ack_msg = {Type::REPLICATION_ACK, 0, msg.seq};
+                        sendto(server_socket, &ack_msg, sizeof(ack_msg), 0, (struct sockaddr *)&from_addr, from_len);
+                    }
                     break;
                 case Type::ELECTION:
-                    handleElectionMessage(from_addr); // Agora só levanta a flag
+                    handleElectionMessage(from_addr);
                     break;
                 case Type::COORDINATOR:
                     handleCoordinatorMessage(from_addr);
@@ -451,13 +480,11 @@ void Server::runAsBackup() {
             }
         }
 
-        // 2. O loop verifica se uma eleição foi solicitada pelo handler.
         if (this->election_requested) {
-            this->election_requested = false; // Limpa a flag
+            this->election_requested = false;
             startElection();
         }
 
-        // Uma pequena pausa para não sobrecarregar a CPU com o loop constante.
         this_thread::sleep_for(chrono::milliseconds(10));
     }
 
