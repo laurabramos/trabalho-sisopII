@@ -451,6 +451,15 @@ bool Server::replicateToBackups(const Message& client_request, const struct sock
     }
 
     log_with_timestamp("[" + my_ip + "] [LEADER] Iniciando replicação síncrona, um por um, para " + to_string(backups_to_notify.size()) + " backup(s)...");
+
+    int replication_socket = createSocket(0); // Cria um socket sem bind, apenas para enviar/receber.
+    if (replication_socket == -1) {
+        log_with_timestamp("[" + my_ip + "] [LEADER] ERRO: Falha ao criar socket para replicação.");
+        return false;
+    }
+    setSocketTimeout(replication_socket, 2); // Timeout de 2 segundos para cada resposta de backup.
+ 
+    
     Message replication_msg = client_request;
     replication_msg.type = Type::REPLICATION_UPDATE;
     replication_msg.ip_addr = client_addr.sin_addr.s_addr;
@@ -462,33 +471,22 @@ bool Server::replicateToBackups(const Message& client_request, const struct sock
 
     int successful_acks = 0;
     for (const auto& backup_info : backups_to_notify) {
-        log_with_timestamp("[" + my_ip + "] [LEADER] Replicando para o backup " + backup_info.ip_address + "...");
-
         struct sockaddr_in dest_addr = {};
         dest_addr.sin_family = AF_INET;
         dest_addr.sin_port = htons(this->server_communication_port);
-        dest_addr.sin_addr.s_addr = inet_addr(backup_info.ip_address.c_str());
+        inet_pton(AF_INET, backup_info.ip_address.c_str(), &dest_addr.sin_addr);
 
         bool ack_received = false;
-        const int MAX_ATTEMPTS = 1; 
+        // Envia a mensagem de replicação
+        sendto(replication_socket, &replication_msg, sizeof(replication_msg), 0, (struct sockaddr *)&dest_addr, sizeof(dest_addr));
 
-        for (int attempt = 0; attempt < MAX_ATTEMPTS && !ack_received; ++attempt) {
-            sendto(this->server_socket, &replication_msg, sizeof(replication_msg), 0, (struct sockaddr *)&dest_addr, sizeof(dest_addr));
-
-            Message response;
-            struct sockaddr_in from_addr;
-            socklen_t from_len = sizeof(from_addr);
-
-            if (recvfrom(this->server_socket, &response, sizeof(response), 0, (struct sockaddr*)&from_addr, &from_len) > 0) {
-                if (response.type == Type::REPLICATION_ACK &&
-                    from_addr.sin_addr.s_addr == dest_addr.sin_addr.s_addr &&
-                    response.seq == client_request.seq)
-                {
-                    ack_received = true;
-                }
-            } else {
-                // recvfrom retornou -1 (timeout) ou erro
-                log_with_timestamp("[" + my_ip + "] [LEADER] AVISO: Timeout esperando ACK de " + backup_info.ip_address + " (tentativa " + to_string(attempt + 1) + ")");
+        // Tenta receber o ACK
+        Message response;
+        struct sockaddr_in from_addr;
+        socklen_t from_len = sizeof(from_addr);
+        if (recvfrom(replication_socket, &response, sizeof(response), 0, (struct sockaddr*)&from_addr, &from_len) > 0) {
+            if (response.type == Type::REPLICATION_ACK && response.seq == client_request.seq) {
+                ack_received = true;
             }
         }
 
@@ -496,13 +494,12 @@ bool Server::replicateToBackups(const Message& client_request, const struct sock
             successful_acks++;
             log_with_timestamp("[" + my_ip + "] [LEADER] ACK recebido de " + backup_info.ip_address);
         } else {
-            log_with_timestamp("[" + my_ip + "] [LEADER] ERRO: Backup " + backup_info.ip_address + " não respondeu após " + to_string(MAX_ATTEMPTS) + " tentativas. Pode estar offline.");
+            log_with_timestamp("[" + my_ip + "] [LEADER] ERRO: Backup " + backup_info.ip_address + " não respondeu. Pode estar offline.");
+            // Aqui você poderia adicionar uma lógica para remover o backup da lista.
         }
     } 
-    setSocketTimeout(this->server_socket, 0);
-
-    log_with_timestamp("[" + my_ip + "] [LEADER] Replicação concluída. Sucesso para " + to_string(successful_acks) + "/" + to_string(backups_to_notify.size()) + " backups.");
-
+    
+    close(replication_socket); // Fecha o socket temporário.
     return true; 
 }
 
