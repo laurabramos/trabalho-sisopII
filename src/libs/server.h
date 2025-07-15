@@ -58,6 +58,7 @@ private:
     bool isDuplicateRequest(const std::string& clientIP, uint32_t seq);
     tableClient updateParticipant(const std::string& clientIP, uint32_t seq, uint32_t num);
     void updateSumTable(uint32_t seq, uint64_t num);
+    void printInicio();
     void printParticipants(const std::string& clientIP);
     void printRepet(const std::string& clientIP, uint32_t duplicate_seq);
     bool checkList(const std::string& ip);
