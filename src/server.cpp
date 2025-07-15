@@ -185,9 +185,18 @@ void Server::findLeaderOrCreateGroup() {
 
     // FASE 3: DECISÃO
     if (!this->leader_ip.empty()) {
-        this->role = ServerRole::BACKUP;
-        log_with_timestamp("[" + my_ip + "] Líder existente encontrado em " + this->leader_ip + ". Tornando-me BACKUP.");
-        return;
+        // Compara o meu IP com o do líder encontrado.
+        if (ipToInt(this->my_ip) > ipToInt(this->leader_ip)) {
+            // Eu sou mais forte que o líder existente. Devo iniciar uma eleição para tomar o poder.
+            log_with_timestamp("[" + my_ip + "] Encontrei um líder mais fraco (" + this->leader_ip + "). Iniciando eleição para assumir.");
+            startElection();
+            return; 
+        } else {
+            // O líder encontrado é mais forte ou igual. Aceito meu papel de backup.
+            this->role = ServerRole::BACKUP;
+            log_with_timestamp("[" + my_ip + "] Líder existente encontrado em " + this->leader_ip + ". Tornando-me BACKUP.");
+            return;
+        }
     }
     
     // Se não encontrou um líder, mas encontrou outros servidores, inicia uma eleição adequada.
