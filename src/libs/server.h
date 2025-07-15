@@ -44,6 +44,7 @@ private:
     string leader_ip;
 
     atomic<ServerState> current_state; 
+    std::atomic<bool> election_requested;
     chrono::steady_clock::time_point last_heartbeat_time;
     
     void findLeaderOrCreateGroup();
