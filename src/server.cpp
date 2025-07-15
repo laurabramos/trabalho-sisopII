@@ -424,7 +424,19 @@ void Server::receiveNumbers() {
 
 // As funções abaixo não precisaram de alterações na lógica principal de eleição
 void Server::printInicio() { log_with_timestamp("num_reqs 0 total_sum 0"); }
-void Server::handleClientDiscovery(const struct sockaddr_in &fromAddr) { /* ... */ }
+void Server::handleClientDiscovery(const struct sockaddr_in &fromAddr)
+{
+    string clientIP = inet_ntoa(fromAddr.sin_addr);
+
+    Message response = {Type::DESC_ACK, 0, 0};
+    sendto(this->client_socket, &response, sizeof(Message), 0, (struct sockaddr *)&fromAddr, sizeof(fromAddr));
+
+    lock_guard<mutex> lock(participantsMutex);
+    if (!checkList(clientIP))
+    {
+        participants.push_back({clientIP, 0, 0, 0});
+    }
+}
 bool Server::replicateToBackups(const Message&, const struct sockaddr_in&, const tableClient&, const tableAgregation&) { return true; }
 void Server::setParticipantState(const std::string&, uint32_t, uint32_t, uint64_t, uint32_t) { /* ... */ }
 void Server::printParticipants(const std::string &clientIP) { /* ... */ }
