@@ -40,6 +40,7 @@ string Client::discoverServer(int Discovery_Port, int Request_Port) {
     Message message = {Type::DESC, 0, 0}; 
     int attempts = 0;
 
+    struct sockaddr_in bcastAddr;
     broadcastAddr.sin_family = AF_INET;
     broadcastAddr.sin_port = htons(Discovery_Port);
     inet_pton(AF_INET, BROADCAST_ADDR, &broadcastAddr.sin_addr);
@@ -89,63 +90,99 @@ string Client::discoverServer(int Discovery_Port, int Request_Port) {
 }
 
 bool Client::sendNum(const std::string& serverIP_param, int Request_Port) {
-    string currentServerIP = serverIP_param; // Cria uma cópia local para poder ser modificada
+    string currentServerIP = serverIP_param;
 
     int clientSocketUni = createSocket(0);
-    if (clientSocketUni == -1) { /* ... */ }
+    if (clientSocketUni == -1) {
+        perror("Erro ao criar socket unicast");
+        return false;
+    }
     setSocketTimeout(clientSocketUni, 3);
 
-    uint32_t num;
-    while (std::cin >> num) {
+    // --- SEÇÃO 1: PROCESSAR A FILA DE NÚMEROS PENDENTES PRIMEIRO ---
+    while (!this->unacked_nums.empty()) {
+        uint32_t num_to_resend = this->unacked_nums.front();
+        cout << "Reenviando número pendente " << num_to_resend << " para o novo servidor " << currentServerIP << "..." << endl;
+        
         bool confirmed = false;
         int send_attempts = 0;
-
         while (!confirmed) {
             if (send_attempts >= MAX_SEND_ATTEMPTS) {
-                cout << "Servidor " << currentServerIP << " não está respondendo. Falha na comunicação." << endl;
+                cout << "O novo servidor " << currentServerIP << " também não está respondendo. Falha na comunicação." << endl;
                 close(clientSocketUni);
-                return false; // Retorna false para o main forçar uma nova descoberta
+                return false;
             }
 
-            // Configura o endereço do servidor atual
             sockaddr_in serverAddr{};
             serverAddr.sin_family = AF_INET;
             serverAddr.sin_port = htons(Request_Port);
             inet_pton(AF_INET, currentServerIP.c_str(), &serverAddr.sin_addr);
 
-            Message message = {Type::REQ, num, this->current_seq, 0, 0, 0};
-            sendto(clientSocketUni, &message, sizeof(Message), 0, (struct sockaddr*)&serverAddr, sizeof(serverAddr));
+            Message message = {Type::REQ, num_to_resend, this->current_seq};
+            sendto(clientSocketUni, &message, sizeof(message), 0, (struct sockaddr*)&serverAddr, sizeof(serverAddr));
 
             Message response;
-            socklen_t serverLen = sizeof(serverAddr);
-            int received = recvfrom(clientSocketUni, &response, sizeof(Message), 0, (struct sockaddr*)&serverAddr, &serverLen);
-
-            if (received > 0) {
+            if (recvfrom(clientSocketUni, &response, sizeof(response), 0, NULL, NULL) > 0) {
                 if (response.type == Type::REQ_ACK && response.seq == this->current_seq) {
-                    // SUCESSO: O servidor é o líder e respondeu
-                    // ... (seu código de impressão de log) ...
-                    cout << "Resposta recebida do líder " << currentServerIP << endl;
+                    log_with_timestamp("Reenvio do número " + to_string(num_to_resend) + " confirmado.");
                     this->current_seq++;
+                    this->unacked_nums.pop();
                     confirmed = true;
-                } 
-                else if (response.type == Type::NOT_LEADER) {
-                    // REDIRECIONAMENTO: O servidor informou que não é o líder
-                    struct in_addr new_leader_addr;
-                    new_leader_addr.s_addr = response.ip_addr;
+                } else if (response.type == Type::NOT_LEADER) {
+                    struct in_addr new_leader_addr = { .s_addr = response.ip_addr };
                     string newLeaderIP = inet_ntoa(new_leader_addr);
-                    
-                    cout << "Redirecionado. O servidor " << currentServerIP << " não é o líder. Novo líder: " << newLeaderIP << endl;
-                    currentServerIP = newLeaderIP; // ATUALIZA O IP DO LÍDER
-                    send_attempts = 0; // Reseta as tentativas e tenta novamente com o novo líder
-                    continue; // Volta ao início do loop while(!confirmed)
+                    cout << "Redirecionado durante reenvio. Novo líder: " << newLeaderIP << endl;
+                    currentServerIP = newLeaderIP;
+                    send_attempts = 0;
                 }
             } else {
-                // TIMEOUT ou ERRO
-                cout << "Erro na confirmação do servidor. Reenviando requisição " << this->current_seq << " (tentativa " << send_attempts + 1 << ")...\n";
                 send_attempts++;
             }
         }
     }
+
+    // --- SEÇÃO 2: PROCESSAR NOVOS NÚMEROS DA ENTRADA PADRÃO ---
+    uint32_t num;
+    cout << "Conectado ao líder " << currentServerIP << ". Digite os números (Ctrl+D para encerrar):" << endl;
+    while (std::cin >> num) {
+        bool confirmed = false;
+        int send_attempts = 0;
+        while (!confirmed) {
+            if (send_attempts >= MAX_SEND_ATTEMPTS) {
+                cout << "Servidor " << currentServerIP << " não está respondendo. Guardando o número " << num << " para reenviar." << endl;
+                this->unacked_nums.push(num);
+                close(clientSocketUni);
+                return false;
+            }
+
+            sockaddr_in serverAddr{};
+            serverAddr.sin_family = AF_INET;
+            serverAddr.sin_port = htons(Request_Port);
+            inet_pton(AF_INET, currentServerIP.c_str(), &serverAddr.sin_addr);
+
+            Message message = {Type::REQ, num, this->current_seq};
+            sendto(clientSocketUni, &message, sizeof(message), 0, (struct sockaddr*)&serverAddr, sizeof(serverAddr));
+
+            Message response;
+            if (recvfrom(clientSocketUni, &response, sizeof(response), 0, NULL, NULL) > 0) {
+                if (response.type == Type::REQ_ACK && response.seq == this->current_seq) {
+                    log_with_timestamp("Soma no servidor: " + to_string(response.total_sum));
+                    this->current_seq++;
+                    confirmed = true;
+                } else if (response.type == Type::NOT_LEADER) {
+                    struct in_addr new_leader_addr = { .s_addr = response.ip_addr };
+                    string newLeaderIP = inet_ntoa(new_leader_addr);
+                    cout << "Líder mudou. Redirecionando para: " << newLeaderIP << endl;
+                    currentServerIP = newLeaderIP;
+                    send_attempts = 0;
+                }
+            } else {
+                cout << "Timeout esperando confirmação. Tentativa " << send_attempts + 1 << "..." << endl;
+                send_attempts++;
+            }
+        }
+    }
+
     close(clientSocketUni);
     return true;
 }
