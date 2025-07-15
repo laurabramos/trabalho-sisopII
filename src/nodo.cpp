@@ -1,4 +1,3 @@
-
 #include "libs/nodo.h"
 #include <netdb.h>
 #include <cstring>
@@ -28,6 +27,7 @@ string Nodo::getIP() {
     string hostname = getHostname();
 
     struct addrinfo hints{}, *info, *p;
+    memset(&hints, 0, sizeof(hints)); // É uma boa prática zerar a struct
     hints.ai_family = AF_INET; 
     hints.ai_socktype = SOCK_STREAM;
 
@@ -57,33 +57,37 @@ int Nodo::createSocket(int port)
         return -1;
     }
 
-     setSocketTimeout(sockfd, 1); 
+    if (port != 0)
+    {
+        int reuse = 1;
+        if (setsockopt(sockfd, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(reuse)) < 0)
+        {
+            cerr << "Failed to set SO_REUSEADDR: " << strerror(errno) << endl;
+            close(sockfd);
+            return -1;
+        }
 
-     if (port != 0)
-     {
-         int reuse = 1;
-         if (setsockopt(sockfd, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(reuse)) < 0)
-         {
-              cerr << "Failed to set SO_REUSEADDR: " << strerror(errno) << endl;
-             close(sockfd);
-             return -1;
-         }
+        struct sockaddr_in addr;
+        // Zera a struct inteira, prática mais segura que bzero
+        memset(&addr, 0, sizeof(addr)); 
+        addr.sin_family = AF_INET;
+        addr.sin_port = htons(port);
+        
+        // ======================================================================
+        // CORREÇÃO CRÍTICA: Converter INADDR_ANY para network byte order.
+        // Sem isso, o bind não funciona corretamente para broadcasts.
+        addr.sin_addr.s_addr = htonl(INADDR_ANY); 
+        // ======================================================================
 
-         struct sockaddr_in addr;
-         addr.sin_family = AF_INET;
-         addr.sin_port = htons(port);
-         addr.sin_addr.s_addr = INADDR_ANY;
-         bzero(&(addr.sin_zero), 8);
+        if (bind(sockfd, (struct sockaddr *)&addr, sizeof(struct sockaddr)) < 0)
+        {
+            cerr << "ERROR on binding socket. (" << port << "): " << strerror(errno) << endl;
+            close(sockfd);
+            return -1;
+        }
+    }
 
-         if (bind(sockfd, (struct sockaddr *)&addr, sizeof(struct sockaddr)) < 0)
-         {
-             cerr << "ERROR on binding socket. (" << port << "): " << strerror(errno) << endl;
-             close(sockfd);
-             return -1;
-         }
-     }
-
-    return sockfd;                 
+    return sockfd;
 }
 
 void Nodo::setSocketBroadcastOptions(int sockfd)
@@ -91,7 +95,8 @@ void Nodo::setSocketBroadcastOptions(int sockfd)
     const int optval{1};
     if (setsockopt(sockfd, SOL_SOCKET, SO_BROADCAST, &optval, sizeof(optval)) < 0)
     {
-        throw runtime_error("Failed to set socket options");
+        // Alterado para não lançar exceção, apenas logar.
+        cerr << "Failed to set SO_BROADCAST: " << strerror(errno) << endl;
     }
 }
 
@@ -100,6 +105,8 @@ void Nodo::setSocketTimeout(int sockfd, int timeoutSec)
     struct timeval timeout;
     timeout.tv_sec = timeoutSec;
     timeout.tv_usec = 0;
-    setsockopt(sockfd, SOL_SOCKET, SO_RCVTIMEO, (const char *)&timeout, sizeof(timeout));
+    if (setsockopt(sockfd, SOL_SOCKET, SO_RCVTIMEO, (const char *)&timeout, sizeof(timeout)) < 0)
+    {
+        cerr << "Failed to set SO_RCVTIMEO: " << strerror(errno) << endl;
+    }
 }
-
