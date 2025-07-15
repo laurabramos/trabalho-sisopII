@@ -5,6 +5,7 @@
 #include <unistd.h>
 #include <iostream>
 #include <cstdint>
+#include <ifaddrs.h> // Para a nova função getIP
 
 using namespace std;
 
@@ -23,27 +24,40 @@ string Nodo::getHostname() {
     return string(hostname);
 }
 
+// ======================================================================
+// CORREÇÃO CRÍTICA 2: Substituída a função getIP() inteira.
+// Esta nova versão itera sobre as interfaces de rede para encontrar o
+// endereço IPv4 correto, funcionando em contêineres e máquinas reais.
+// ======================================================================
 string Nodo::getIP() {
-    string hostname = getHostname();
+    struct ifaddrs *ifaddr, *ifa;
+    int family;
+    char host[NI_MAXHOST];
+    string ipAddress = "127.0.0.1"; // Retorna localhost por padrão se nada for encontrado
 
-    struct addrinfo hints{}, *info, *p;
-    memset(&hints, 0, sizeof(hints)); // É uma boa prática zerar a struct
-    hints.ai_family = AF_INET; 
-    hints.ai_socktype = SOCK_STREAM;
-
-    if (getaddrinfo(hostname.c_str(), nullptr, &hints, &info) != 0) {
-        perror("getaddrinfo");
-        return "Erro ao obter IP";
+    if (getifaddrs(&ifaddr) == -1) {
+        perror("getifaddrs");
+        return ipAddress;
     }
 
-    string ipAddress = "Desconhecido";
-    for (p = info; p != nullptr; p = p->ai_next) {
-        struct sockaddr_in *addr = (struct sockaddr_in *)p->ai_addr;
-        ipAddress = inet_ntoa(addr->sin_addr);
-        break; 
+    for (ifa = ifaddr; ifa != NULL; ifa = ifa->ifa_next) {
+        if (ifa->ifa_addr == NULL)
+            continue;
+
+        family = ifa->ifa_addr->sa_family;
+
+        if (family == AF_INET) { // Apenas endereços IPv4
+            // Ignora a interface de loopback "lo"
+            if (strcmp(ifa->ifa_name, "lo") != 0) {
+                if (getnameinfo(ifa->ifa_addr, sizeof(struct sockaddr_in), host, NI_MAXHOST, NULL, 0, NI_NUMERICHOST) == 0) {
+                    ipAddress = host;
+                    break; // Pega o primeiro IP válido que não seja de loopback
+                }
+            }
+        }
     }
 
-    freeaddrinfo(info);
+    freeifaddrs(ifaddr);
     return ipAddress;
 }
 
@@ -68,16 +82,12 @@ int Nodo::createSocket(int port)
         }
 
         struct sockaddr_in addr;
-        // Zera a struct inteira, prática mais segura que bzero
         memset(&addr, 0, sizeof(addr)); 
         addr.sin_family = AF_INET;
         addr.sin_port = htons(port);
         
-        // ======================================================================
-        // CORREÇÃO CRÍTICA: Converter INADDR_ANY para network byte order.
-        // Sem isso, o bind não funciona corretamente para broadcasts.
+        // CORREÇÃO CRÍTICA 1: Converter INADDR_ANY para network byte order.
         addr.sin_addr.s_addr = htonl(INADDR_ANY); 
-        // ======================================================================
 
         if (bind(sockfd, (struct sockaddr *)&addr, sizeof(struct sockaddr)) < 0)
         {
@@ -95,7 +105,6 @@ void Nodo::setSocketBroadcastOptions(int sockfd)
     const int optval{1};
     if (setsockopt(sockfd, SOL_SOCKET, SO_BROADCAST, &optval, sizeof(optval)) < 0)
     {
-        // Alterado para não lançar exceção, apenas logar.
         cerr << "Failed to set SO_BROADCAST: " << strerror(errno) << endl;
     }
 }
