@@ -492,7 +492,7 @@ bool Server::replicateToBackups(const Message& client_request, const struct sock
     replication_msg.total_reqs = client_state.last_req;
     replication_msg.total_sum_server = server_state.sum;
     replication_msg.total_reqs_server = server_state.num_reqs;
-    setSocketTimeout(this->server_socket, 2); // Timeout de 2 segundos por resposta
+    //setSocketTimeout(this->server_socket, 2); // Timeout de 2 segundos por resposta
 
     int successful_acks = 0;
     for (const auto& backup_info : backups_to_notify) {
