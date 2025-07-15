@@ -85,6 +85,9 @@ void Server::handleElectionMessage(const struct sockaddr_in &fromAddr) {
         log_with_timestamp("[" + my_ip + "] Meu IP é maior. Enviando OK_ANSWER.");
         Message answer_msg = {Type::OK_ANSWER, 0, 0};
         sendto(this->server_socket, &answer_msg, sizeof(answer_msg), 0, (struct sockaddr *)&fromAddr, sizeof(fromAddr));
+
+        this_thread::sleep_for(chrono::milliseconds(50));
+        
         startElection(); 
     }
 }
