@@ -15,7 +15,8 @@ using namespace std;
 // CORREÇÃO: Reintroduzida a definição de ServerRole.
 enum class ServerRole {
     LEADER,
-    BACKUP
+    BACKUP,
+    NEED_ELECTION
 };
 
 enum class ServerState {
