@@ -49,6 +49,7 @@ private:
     string leader_ip;
 
     atomic<ServerState> current_state;
+    uint32_t ipToInt(const std::string &ipStr);
     std::atomic<bool> election_requested;
     chrono::steady_clock::time_point last_heartbeat_time;
     chrono::steady_clock::time_point election_start_time;
