@@ -65,6 +65,7 @@ private:
     void handleCoordinatorMessage(const struct sockaddr_in &fromAddr);
     void listenForServerMessages();
     void listenForClientMessages();
+    void findAndElect();
 
     void handleClientDiscovery(const struct sockaddr_in &fromAddr);
     void handleServerDiscovery(const struct sockaddr_in &fromAddr);
