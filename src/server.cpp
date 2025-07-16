@@ -130,82 +130,102 @@ void Server::findAndElect()
             if (from_ip == my_ip)
                 continue;
 
-            lock_guard<mutex> lock(serverListMutex);
-            if (!checkList(from_ip))
+            if (response.type == Type::STATE_TRANSFER_PAYLOAD)
             {
-                server_list.push_back({from_ip});
-                log_with_timestamp("[" + my_ip + "] Servidor " + from_ip + " detectado.");
-            }
-        }
-    }
-
-    server_list.push_back({my_ip});
-
-    string new_leader_ip = my_ip;
-    for (const auto &server : server_list)
-    {
-        if (ipToInt(server.ip_address) > ipToInt(new_leader_ip))
-        {
-            new_leader_ip = server.ip_address;
-        }
-    }
-
-    this->leader_ip = new_leader_ip;
-    if (this->leader_ip != this->my_ip)
-    {
-        log_with_timestamp("[" + my_ip + "] Nó não eleito. Sincronizando estado com o líder " + this->leader_ip + "...");
-
-        // Limpa o estado local para receber o novo
-        participants.clear();
-        sumTotal = {0, 0};
-
-        // Envia o pedido de transferência
-        Message request_msg = {Type::STATE_TRANSFER_REQUEST, 0, 0};
-        struct sockaddr_in leader_addr = {};
-        leader_addr.sin_family = AF_INET;
-        leader_addr.sin_port = htons(server_communication_port);
-        inet_pton(AF_INET, this->leader_ip.c_str(), &leader_addr.sin_addr);
-        sendto(server_socket, &request_msg, sizeof(request_msg), 0, (struct sockaddr *)&leader_addr, sizeof(leader_addr));
-
-        // Espera um tempo para a transferência de estado ocorrer
-        // Um mecanismo de ACK seria mais robusto, mas o sleep é uma simplificação.
-        log_with_timestamp("[" + my_ip + "] Aguardando transferência de estado...");
-        setSocketTimeout(server_socket, 5); // Timeout de 5s para a transferência
-
-        auto transfer_start_time = chrono::steady_clock::now();
-        while (chrono::duration_cast<chrono::seconds>(chrono::steady_clock::now() - transfer_start_time).count() < 5)
-        {
-            Message msg;
-            if (recvfrom(server_socket, &msg, sizeof(msg), 0, NULL, NULL) > 0)
-            {
-                if (msg.type == Type::STATE_TRANSFER_PAYLOAD)
+                if (response.ip_addr == 0)
                 {
-                    // Mesma lógica de aplicação de estado do listener
-                    if (msg.ip_addr == 0)
-                    { /* aplica estado global */
-                    }
-                    else
-                    { /* aplica estado de participante */
-                    }
+                    lock_guard<mutex> lock(sumMutex);
+                    sumTotal.sum = response.total_sum_server;
+                    sumTotal.num_reqs = response.total_reqs_server;
+                    log_with_timestamp("[" + my_ip + "] Estado global recebido do líder anterior: " + to_string(sumTotal.sum));
+                }
+                else
+                {
+                    struct in_addr client_addr = {.s_addr = response.ip_addr};
+                    setParticipantState(inet_ntoa(client_addr), response.seq, response.num, response.total_sum, response.seq);
+                    log_with_timestamp("[" + my_ip + "] Estado do participante " + string(inet_ntoa(client_addr)) + " recebido.");
+                }
+            }
+            else if (response.type == Type::SERVER_DISCOVERY)
+            {
+                lock_guard<mutex> lock(serverListMutex);
+                if (!checkList(from_ip))
+                {
+                    server_list.push_back({from_ip});
+                    log_with_timestamp("[" + my_ip + "] Servidor " + from_ip + " detectado.");
                 }
             }
         }
-        log_with_timestamp("[" + my_ip + "] Sincronização concluída ou timeout.");
     }
+}
 
-    // Após a sincronização (se necessária), define o papel final.
-    if (this->leader_ip == this->my_ip)
+server_list.push_back({my_ip});
+
+string new_leader_ip = my_ip;
+for (const auto &server : server_list)
+{
+    if (ipToInt(server.ip_address) > ipToInt(new_leader_ip))
     {
-        // Se um nó retorna e tem o maior IP, ele será eleito, mas começará com estado vazio.
-        // Ele se atualizará à medida que os clientes se conectarem.
-        // Uma solução mais avançada exigiria que ele obtivesse o estado de um dos backups.
-        this->role = ServerRole::LEADER;
+        new_leader_ip = server.ip_address;
     }
-    else
+}
+
+this->leader_ip = new_leader_ip;
+if (this->leader_ip != this->my_ip)
+{
+    log_with_timestamp("[" + my_ip + "] Nó não eleito. Sincronizando estado com o líder " + this->leader_ip + "...");
+
+    // Limpa o estado local para receber o novo
+    participants.clear();
+    sumTotal = {0, 0};
+
+    // Envia o pedido de transferência
+    Message request_msg = {Type::STATE_TRANSFER_REQUEST, 0, 0};
+    struct sockaddr_in leader_addr = {};
+    leader_addr.sin_family = AF_INET;
+    leader_addr.sin_port = htons(server_communication_port);
+    inet_pton(AF_INET, this->leader_ip.c_str(), &leader_addr.sin_addr);
+    sendto(server_socket, &request_msg, sizeof(request_msg), 0, (struct sockaddr *)&leader_addr, sizeof(leader_addr));
+
+    // Espera um tempo para a transferência de estado ocorrer
+    // Um mecanismo de ACK seria mais robusto, mas o sleep é uma simplificação.
+    log_with_timestamp("[" + my_ip + "] Aguardando transferência de estado...");
+    setSocketTimeout(server_socket, 5); // Timeout de 5s para a transferência
+
+    auto transfer_start_time = chrono::steady_clock::now();
+    while (chrono::duration_cast<chrono::seconds>(chrono::steady_clock::now() - transfer_start_time).count() < 5)
     {
-        this->role = ServerRole::BACKUP;
+        Message msg;
+        if (recvfrom(server_socket, &msg, sizeof(msg), 0, NULL, NULL) > 0)
+        {
+            if (msg.type == Type::STATE_TRANSFER_PAYLOAD)
+            {
+                // Mesma lógica de aplicação de estado do listener
+                if (msg.ip_addr == 0)
+                { /* aplica estado global */
+                }
+                else
+                { /* aplica estado de participante */
+                }
+            }
+        }
     }
-    log_with_timestamp("[" + my_ip + "] Eleição concluída. Função final: " + (this->role == ServerRole::LEADER ? "LÍDER" : "BACKUP") + ". Líder definido como: " + this->leader_ip);
+    log_with_timestamp("[" + my_ip + "] Sincronização concluída ou timeout.");
+}
+
+// Após a sincronização (se necessária), define o papel final.
+if (this->leader_ip == this->my_ip)
+{
+    // Se um nó retorna e tem o maior IP, ele será eleito, mas começará com estado vazio.
+    // Ele se atualizará à medida que os clientes se conectarem.
+    // Uma solução mais avançada exigiria que ele obtivesse o estado de um dos backups.
+    this->role = ServerRole::LEADER;
+}
+else
+{
+    this->role = ServerRole::BACKUP;
+}
+log_with_timestamp("[" + my_ip + "] Eleição concluída. Função final: " + (this->role == ServerRole::LEADER ? "LÍDER" : "BACKUP") + ". Líder definido como: " + this->leader_ip);
 }
 
 // --- LÓGICA DE OPERAÇÃO ---
@@ -232,6 +252,7 @@ void Server::runAsBackup()
 {
     log_with_timestamp("--- MODO BACKUP ATIVADO. Líder: " + this->leader_ip + " ---");
 
+    /*
     log_with_timestamp("[" + my_ip + "] [BACKUP] Solicitando estado completo do líder " + this->leader_ip);
     Message request_msg = {Type::STATE_TRANSFER_REQUEST, 0, 0};
     struct sockaddr_in leader_addr = {};
@@ -240,6 +261,7 @@ void Server::runAsBackup()
     inet_pton(AF_INET, this->leader_ip.c_str(), &leader_addr.sin_addr);
     // Usando o server_socket, que já está aberto
     sendto(server_socket, &request_msg, sizeof(request_msg), 0, (struct sockaddr *)&leader_addr, sizeof(leader_addr));
+    */
 
     // Inicializa o timestamp para a verificação de falha
     last_heartbeat_time = chrono::steady_clock::now();
@@ -259,7 +281,7 @@ void Server::runAsBackup()
 }
 
 // --- THREADS E HANDLERS ---
-
+/*
 void Server::handleStateTransferRequest(const struct sockaddr_in &fromAddr)
 {
     string requester_ip = inet_ntoa(fromAddr.sin_addr);
@@ -290,6 +312,7 @@ void Server::handleStateTransferRequest(const struct sockaddr_in &fromAddr)
     }
     log_with_timestamp("[" + my_ip + "] [LEADER] Transferência de estado para " + requester_ip + " concluída.");
 }
+    */
 
 void Server::checkForLeaderFailure()
 {
@@ -349,10 +372,10 @@ void Server::listenForServerMessages()
             {
                 handleServerDiscovery(from_addr);
             }
-            else if (msg.type == Type::STATE_TRANSFER_REQUEST)
-            {
-                handleStateTransferRequest(from_addr);
-            }
+            // else if (msg.type == Type::STATE_TRANSFER_REQUEST)
+            // {
+            //     handleStateTransferRequest(from_addr);
+            // }
         }
     }
 }
@@ -362,7 +385,7 @@ void Server::handleServerDiscovery(const struct sockaddr_in &fromAddr)
     string new_server_ip = inet_ntoa(fromAddr.sin_addr);
 
     // Adiciona o novo servidor à lista, se ainda não estiver lá.
-    lock_guard<mutex> lock(serverListMutex);
+    lock_guard<mutex> lock_sl(serverListMutex);
     if (!checkList(new_server_ip))
     {
         server_list.push_back({new_server_ip});
@@ -374,10 +397,37 @@ void Server::handleServerDiscovery(const struct sockaddr_in &fromAddr)
     // ceder a liderança e forçar uma nova eleição.
     if (this->role == ServerRole::LEADER && ipToInt(new_server_ip) > ipToInt(my_ip))
     {
-        log_with_timestamp("[" + my_ip + "] Detectado servidor com IP maior (" + new_server_ip + "). Cedendo liderança.");
+        log_with_timestamp("[" + my_ip + "] [LEADER] Desafiado por " + new_server_ip + ". Iniciando transferência de estado...");
+
+        // ***** LÓGICA DE PUSH DO ESTADO *****
+        { // Escopo para travar os mutexes de estado
+            lock_guard<mutex> lock_p(participantsMutex);
+            lock_guard<mutex> lock_s(sumMutex);
+
+            // Envia o estado global
+            Message global_state_msg = {};
+            global_state_msg.type = Type::STATE_TRANSFER_PAYLOAD;
+            global_state_msg.total_sum_server = sumTotal.sum;
+            global_state_msg.total_reqs_server = sumTotal.num_reqs;
+            sendto(server_socket, &global_state_msg, sizeof(global_state_msg), 0, (struct sockaddr *)&fromAddr, sizeof(fromAddr));
+
+            // Envia o estado de cada participante
+            for (const auto &p : participants)
+            {
+                Message participant_msg = {};
+                participant_msg.type = Type::STATE_TRANSFER_PAYLOAD;
+                inet_pton(AF_INET, p.address.c_str(), &participant_msg.ip_addr);
+                participant_msg.seq = p.last_req;
+                participant_msg.num = p.last_value;
+                participant_msg.total_sum = p.last_sum;
+                sendto(server_socket, &participant_msg, sizeof(participant_msg), 0, (struct sockaddr *)&fromAddr, sizeof(fromAddr));
+                this_thread::sleep_for(chrono::milliseconds(10));
+            }
+        }
+        log_with_timestamp("[" + my_ip + "] [LEADER] Transferência de estado para " + new_server_ip + " concluída. Cedendo liderança.");
+
         this->role = ServerRole::NEEDS_ELECTION;
     }
-    // ================================================================
 }
 
 void Server::listenForBackupMessages()
