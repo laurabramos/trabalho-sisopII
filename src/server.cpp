@@ -86,14 +86,14 @@ void Server::handleClientDiscovery(const struct sockaddr_in &fromAddr)
 
 void Server::handleServerDiscovery(const struct sockaddr_in &fromAddr)
 {
-    log_with_timestamp("[" + my_ip + "] Recebi uma mensagem de SERVER_DISCOVERY de " + inet_ntoa(fromAddr.sin_addr));
+    //log_with_timestamp("[" + my_ip + "] Recebi uma mensagem de SERVER_DISCOVERY de " + inet_ntoa(fromAddr.sin_addr));
     string new_server_ip = inet_ntoa(fromAddr.sin_addr);
     const int ACK_ATTEMPTS = 3;
     Message response = {Type::SERVER_DISCOVERY_ACK, 0, 0};
 
     for (int i = 0; i < ACK_ATTEMPTS; ++i)
     {
-        log_with_timestamp("[" + my_ip + "] Enviando SERVER_DISCOVERY_ACK para " + new_server_ip);
+        //log_with_timestamp("[" + my_ip + "] Enviando SERVER_DISCOVERY_ACK para " + new_server_ip);
         sendto(this->server_socket, &response, sizeof(Message), 0, (struct sockaddr *)&fromAddr, sizeof(fromAddr));
         this_thread::sleep_for(chrono::milliseconds(50));
     }
@@ -116,11 +116,11 @@ uint32_t ipToInt(const std::string &ipStr)
 void Server::handleElectionMessage(const struct sockaddr_in &fromAddr)
 {
     string challenger_ip = inet_ntoa(fromAddr.sin_addr);
-    log_with_timestamp("[" + my_ip + "] Recebi uma mensagem de ELECTION de " + challenger_ip);
+    //log_with_timestamp("[" + my_ip + "] Recebi uma mensagem de ELECTION de " + challenger_ip);
 
     if (ipToInt(this->my_ip) > ipToInt(challenger_ip))
     {
-        log_with_timestamp("[" + my_ip + "] Meu IP é maior. Enviando rajada de OK_ANSWER e iniciando minha eleição.");
+        //log_with_timestamp("[" + my_ip + "] Meu IP é maior. Enviando rajada de OK_ANSWER e iniciando minha eleição.");
         Message answer_msg = {Type::OK_ANSWER, 0, 0};
 
         for (int i = 0; i < 3; ++i)
@@ -135,7 +135,7 @@ void Server::handleElectionMessage(const struct sockaddr_in &fromAddr)
 
 void Server::handleCoordinatorMessage(const struct sockaddr_in &fromAddr)
 {
-    log_with_timestamp("[" + my_ip + "] Recebi uma mensagem de COORDINATOR de " + inet_ntoa(fromAddr.sin_addr));
+    //log_with_timestamp("[" + my_ip + "] Recebi uma mensagem de COORDINATOR de " + inet_ntoa(fromAddr.sin_addr));
     this->leader_ip = inet_ntoa(fromAddr.sin_addr);
     this->election_in_progress = false;
     this->last_heartbeat_time = chrono::steady_clock::now();
@@ -172,14 +172,14 @@ void Server::findLeaderOrCreateGroup()
     while (chrono::duration_cast<chrono::seconds>(chrono::steady_clock::now() - discovery_start_time).count() < DISCOVERY_DURATION_SEC)
     {
         this_thread::sleep_for(chrono::milliseconds(100));
-        log_with_timestamp("[" + my_ip + "] Enviando mensagem de descoberta de servidor...");
+        //log_with_timestamp("[" + my_ip + "] Enviando mensagem de descoberta de servidor...");
         sendto(this->server_socket, &discovery_msg, sizeof(discovery_msg), 0, (struct sockaddr *)&broadcast_addr, sizeof(broadcast_addr));
 
         Message response;
         struct sockaddr_in from_addr;
         socklen_t from_len = sizeof(from_addr);
         int received = recvfrom(this->server_socket, &response, sizeof(response), 0, (struct sockaddr *)&from_addr, &from_len);
-        log_with_timestamp("[" + my_ip + "] Recebido " + to_string(received) + " bytes de resposta.");
+        //log_with_timestamp("[" + my_ip + "] Recebido " + to_string(received) + " bytes de resposta.");
         
         if (received > 0)
         {
@@ -290,7 +290,7 @@ void Server::startElection()
     }
     else
     {
-        log_with_timestamp("[" + my_ip + "] Processo de eleição encerrado. ");
+        //log_with_timestamp("[" + my_ip + "] Processo de eleição encerrado. ");
     }
 
     this->election_in_progress = false;
@@ -298,7 +298,7 @@ void Server::startElection()
 
 void Server::runAsLeader()
 {
-    cout << "EU SOU O LÍDER PORRAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA" << endl;
+    log_with_timestamp("[" + my_ip + "] SOU O NOVO LIDER ");
     
     serverListMutex.lock();
     server_list.clear();
