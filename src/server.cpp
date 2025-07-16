@@ -151,61 +151,87 @@ void Server::findAndElect()
     }
 
     this->leader_ip = new_leader_ip;
-    if (this->leader_ip != this->my_ip)
-    {
-        log_with_timestamp("[" + my_ip + "] Nó não eleito. Sincronizando estado com o líder " + this->leader_ip + "...");
 
-        // Limpa o estado local para receber o novo
-        participants.clear();
-        sumTotal = {0, 0};
-
-        // Envia o pedido de transferência
-        Message request_msg = {Type::STATE_TRANSFER_REQUEST, 0, 0};
-        struct sockaddr_in leader_addr = {};
-        leader_addr.sin_family = AF_INET;
-        leader_addr.sin_port = htons(server_communication_port);
-        inet_pton(AF_INET, this->leader_ip.c_str(), &leader_addr.sin_addr);
-        sendto(server_socket, &request_msg, sizeof(request_msg), 0, (struct sockaddr *)&leader_addr, sizeof(leader_addr));
-
-        // Espera um tempo para a transferência de estado ocorrer
-        // Um mecanismo de ACK seria mais robusto, mas o sleep é uma simplificação.
-        log_with_timestamp("[" + my_ip + "] Aguardando transferência de estado...");
-        setSocketTimeout(server_socket, 5); // Timeout de 5s para a transferência
-
-        auto transfer_start_time = chrono::steady_clock::now();
-        while (chrono::duration_cast<chrono::seconds>(chrono::steady_clock::now() - transfer_start_time).count() < 5)
-        {
-            Message msg;
-            if (recvfrom(server_socket, &msg, sizeof(msg), 0, NULL, NULL) > 0)
-            {
-                if (msg.type == Type::STATE_TRANSFER_PAYLOAD)
-                {
-                    // Mesma lógica de aplicação de estado do listener
-                    if (msg.ip_addr == 0)
-                    { /* aplica estado global */
-                    }
-                    else
-                    { /* aplica estado de participante */
-                    }
-                }
-            }
-        }
-        log_with_timestamp("[" + my_ip + "] Sincronização concluída ou timeout.");
-    }
-
-    // Após a sincronização (se necessária), define o papel final.
     if (this->leader_ip == this->my_ip)
     {
         // Se um nó retorna e tem o maior IP, ele será eleito, mas começará com estado vazio.
         // Ele se atualizará à medida que os clientes se conectarem.
         // Uma solução mais avançada exigiria que ele obtivesse o estado de um dos backups.
         this->role = ServerRole::LEADER;
+        log_with_timestamp("[" + my_ip + "] Eleito como LÍDER.");
+
+        string sync_source_ip = "";
+        {
+            lock_guard<mutex> lock(serverListMutex);
+            if (server_list.size() > 1)
+            {
+                // Pega o primeiro IP da lista que não seja o meu para sincronizar
+                for (const auto &server : server_list)
+                {
+                    if (server.ip_address != my_ip)
+                    {
+                        sync_source_ip = server.ip_address;
+                        break;
+                    }
+                }
+            }
+        }
+
+        if (!sync_source_ip.empty())
+        {
+            log_with_timestamp("[" + my_ip + "] [LÍDER] Detectado re-eleição. Solicitando estado do backup: " + sync_source_ip);
+
+            // Limpa o estado local antigo
+            participants.clear();
+            sumTotal = {0, 0};
+
+            // Envia pedido de transferência de estado para o backup escolhido
+            Message request_msg = {Type::STATE_TRANSFER_REQUEST, 0, 0};
+            struct sockaddr_in backup_addr = {};
+            backup_addr.sin_family = AF_INET;
+            backup_addr.sin_port = htons(server_communication_port);
+            inet_pton(AF_INET, sync_source_ip.c_str(), &backup_addr.sin_addr);
+            sendto(server_socket, &request_msg, sizeof(request_msg), 0, (struct sockaddr *)&backup_addr, sizeof(backup_addr));
+
+            // Espera pela transferência do estado
+            log_with_timestamp("[" + my_ip + "] [LÍDER] Aguardando transferência de estado...");
+            setSocketTimeout(server_socket, 5); // Timeout de 5s para a transferência
+
+            auto transfer_start_time = chrono::steady_clock::now();
+            while (chrono::duration_cast<chrono::seconds>(chrono::steady_clock::now() - transfer_start_time).count() < 5)
+            {
+                Message msg;
+                if (recvfrom(server_socket, &msg, sizeof(msg), 0, NULL, NULL) > 0)
+                {
+                    if (msg.type == Type::STATE_TRANSFER_PAYLOAD)
+                    {
+                        applyStatePayload(msg);
+                    }
+                }
+                else
+                {
+                    // Timeout ou erro, para de esperar
+                    break;
+                }
+            }
+            log_with_timestamp("[" + my_ip + "] [LÍDER] Sincronização concluída ou timeout.");
+        }
+        else
+        {
+            log_with_timestamp("[" + my_ip + "] [LÍDER] Iniciando como primeiro servidor. Nenhum estado para sincronizar.");
+        }
     }
-    else
+    else // Eu sou um backup
     {
         this->role = ServerRole::BACKUP;
+        log_with_timestamp("[" + my_ip + "] Não eleito. Função: BACKUP. Líder: " + this->leader_ip);
+        // A lógica para sincronizar como backup já está corretamente em runAsBackup(),
+        // que será chamado na sequência pelo loop principal.
     }
+
     log_with_timestamp("[" + my_ip + "] Eleição concluída. Função final: " + (this->role == ServerRole::LEADER ? "LÍDER" : "BACKUP") + ". Líder definido como: " + this->leader_ip);
+
+    // =================== FIM DA LÓGICA MODIFICADA ====================
 }
 
 // --- LÓGICA DE OPERAÇÃO ---
@@ -259,6 +285,25 @@ void Server::runAsBackup()
 }
 
 // --- THREADS E HANDLERS ---
+
+void Server::applyStatePayload(const Message &msg)
+{
+    // Se ip_addr for 0, é a mensagem de estado global
+    if (msg.ip_addr == 0)
+    {
+        lock_guard<mutex> lock(sumMutex);
+        sumTotal.sum = msg.total_sum_server;
+        sumTotal.num_reqs = msg.total_reqs_server;
+        log_with_timestamp("[" + my_ip + "] Estado global sincronizado: soma=" + to_string(sumTotal.sum) + ", reqs=" + to_string(sumTotal.num_reqs));
+    }
+    else // Senão, é o estado de um participante
+    {
+        struct in_addr client_addr = {.s_addr = msg.ip_addr};
+        string client_ip_str = inet_ntoa(client_addr);
+        setParticipantState(client_ip_str, msg.seq, msg.num, msg.total_sum, msg.seq);
+        log_with_timestamp("[" + my_ip + "] Estado do participante " + client_ip_str + " sincronizado.");
+    }
+}
 
 void Server::handleStateTransferRequest(const struct sockaddr_in &fromAddr)
 {
@@ -411,20 +456,14 @@ void Server::listenForBackupMessages()
             }
             else if (msg.type == Type::STATE_TRANSFER_PAYLOAD && from_ip == this->leader_ip)
             {
-                // Se ip_addr for 0, é a mensagem de estado global
-                if (msg.ip_addr == 0)
-                {
-                    lock_guard<mutex> lock(sumMutex);
-                    sumTotal.sum = msg.total_sum_server;
-                    sumTotal.num_reqs = msg.total_reqs_server;
-                    log_with_timestamp("[" + my_ip + "] [BACKUP] Estado global sincronizado: " + to_string(sumTotal.sum));
-                }
-                else
-                { // Senão, é o estado de um participante
-                    struct in_addr client_addr = {.s_addr = msg.ip_addr};
-                    setParticipantState(inet_ntoa(client_addr), msg.seq, msg.num, msg.total_sum, msg.seq);
-                    log_with_timestamp("[" + my_ip + "] [BACKUP] Estado do participante " + string(inet_ntoa(client_addr)) + " sincronizado.");
-                }
+                // USA A NOVA FUNÇÃO AUXILIAR
+                applyStatePayload(msg);
+            }
+            // ADICIONE ESTE BLOCO ELSE IF
+            else if (msg.type == Type::STATE_TRANSFER_REQUEST)
+            {
+                log_with_timestamp("[" + my_ip + "] [BACKUP] Recebido pedido de estado de " + from_ip + ". Enviando estado atual...");
+                handleStateTransferRequest(from_addr);
             }
         }
     }
