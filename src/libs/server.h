@@ -45,6 +45,7 @@ private:
     void runAsBackup();
 
     // Threads e Handlers
+    void applyStatePayload(const Message& msg);
     void sendHeartbeats();
     void listenForBackupMessages();
     void checkForLeaderFailure();
