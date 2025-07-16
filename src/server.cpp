@@ -150,88 +150,18 @@ void Server::findAndElect()
         }
     }
 
+    // A FUNÇÃO AGORA APENAS DEFINE OS PAPÉIS E RETORNA.
     this->leader_ip = new_leader_ip;
-
     if (this->leader_ip == this->my_ip)
     {
-        // Se um nó retorna e tem o maior IP, ele será eleito, mas começará com estado vazio.
-        // Ele se atualizará à medida que os clientes se conectarem.
-        // Uma solução mais avançada exigiria que ele obtivesse o estado de um dos backups.
         this->role = ServerRole::LEADER;
-        log_with_timestamp("[" + my_ip + "] Eleito como LÍDER.");
-
-        string sync_source_ip = "";
-        {
-            lock_guard<mutex> lock(serverListMutex);
-            if (server_list.size() > 1)
-            {
-                // Pega o primeiro IP da lista que não seja o meu para sincronizar
-                for (const auto &server : server_list)
-                {
-                    if (server.ip_address != my_ip)
-                    {
-                        sync_source_ip = server.ip_address;
-                        break;
-                    }
-                }
-            }
-        }
-
-        if (!sync_source_ip.empty())
-        {
-            log_with_timestamp("[" + my_ip + "] [LÍDER] Detectado re-eleição. Solicitando estado do backup: " + sync_source_ip);
-
-            // Limpa o estado local antigo
-            participants.clear();
-            sumTotal = {0, 0};
-
-            // Envia pedido de transferência de estado para o backup escolhido
-            Message request_msg = {Type::STATE_TRANSFER_REQUEST, 0, 0};
-            struct sockaddr_in backup_addr = {};
-            backup_addr.sin_family = AF_INET;
-            backup_addr.sin_port = htons(server_communication_port);
-            inet_pton(AF_INET, sync_source_ip.c_str(), &backup_addr.sin_addr);
-            sendto(server_socket, &request_msg, sizeof(request_msg), 0, (struct sockaddr *)&backup_addr, sizeof(backup_addr));
-
-            // Espera pela transferência do estado
-            log_with_timestamp("[" + my_ip + "] [LÍDER] Aguardando transferência de estado...");
-            setSocketTimeout(server_socket, 5); // Timeout de 5s para a transferência
-
-            auto transfer_start_time = chrono::steady_clock::now();
-            while (chrono::duration_cast<chrono::seconds>(chrono::steady_clock::now() - transfer_start_time).count() < 5)
-            {
-                Message msg;
-                if (recvfrom(server_socket, &msg, sizeof(msg), 0, NULL, NULL) > 0)
-                {
-                    if (msg.type == Type::STATE_TRANSFER_PAYLOAD)
-                    {
-                        applyStatePayload(msg);
-                    }
-                }
-                else
-                {
-                    // Timeout ou erro, para de esperar
-                    break;
-                }
-            }
-            log_with_timestamp("[" + my_ip + "] [LÍDER] Sincronização concluída ou timeout.");
-        }
-        else
-        {
-            log_with_timestamp("[" + my_ip + "] [LÍDER] Iniciando como primeiro servidor. Nenhum estado para sincronizar.");
-        }
     }
-    else // Eu sou um backup
+    else
     {
         this->role = ServerRole::BACKUP;
-        log_with_timestamp("[" + my_ip + "] Não eleito. Função: BACKUP. Líder: " + this->leader_ip);
-        // A lógica para sincronizar como backup já está corretamente em runAsBackup(),
-        // que será chamado na sequência pelo loop principal.
     }
 
     log_with_timestamp("[" + my_ip + "] Eleição concluída. Função final: " + (this->role == ServerRole::LEADER ? "LÍDER" : "BACKUP") + ". Líder definido como: " + this->leader_ip);
-
-    // =================== FIM DA LÓGICA MODIFICADA ====================
 }
 
 // --- LÓGICA DE OPERAÇÃO ---
@@ -239,7 +169,65 @@ void Server::findAndElect()
 void Server::runAsLeader()
 {
     log_with_timestamp("--- MODO LÍDER ATIVADO ---");
-    this->leader_ip = my_ip; // Garante que sei que sou o líder
+    this->leader_ip = my_ip; 
+
+    // ================== NOVA LÓGICA DE SINCRONIZAÇÃO DO LÍDER ==================
+    bool needs_sync = false;
+    {
+        lock_guard<mutex> lock_s(sumMutex);
+        lock_guard<mutex> lock_l(serverListMutex);
+        // Heurística: se meu estado está zerado, mas conheço outros servidores, preciso sincronizar.
+        if (sumTotal.num_reqs == 0 && server_list.size() > 1)
+        {
+            needs_sync = true;
+        }
+    }
+
+    if (needs_sync)
+    {
+        string sync_source_ip = "";
+        {
+            lock_guard<mutex> lock(serverListMutex);
+            for (const auto &server : server_list) {
+                if (server.ip_address != my_ip) {
+                    sync_source_ip = server.ip_address;
+                    break;
+                }
+            }
+        }
+
+        if (!sync_source_ip.empty())
+        {
+             log_with_timestamp("[" + my_ip + "] [LÍDER] Assumindo liderança, solicitando estado do backup: " + sync_source_ip);
+            
+            Message request_msg = {Type::STATE_TRANSFER_REQUEST, 0, 0};
+            struct sockaddr_in backup_addr = {};
+            backup_addr.sin_family = AF_INET;
+            backup_addr.sin_port = htons(server_communication_port);
+            inet_pton(AF_INET, sync_source_ip.c_str(), &backup_addr.sin_addr);
+            sendto(server_socket, &request_msg, sizeof(request_msg), 0, (struct sockaddr *)&backup_addr, sizeof(backup_addr));
+
+            log_with_timestamp("[" + my_ip + "] [LÍDER] Aguardando transferência de estado...");
+            setSocketTimeout(server_socket, 5);
+
+            auto transfer_start_time = chrono::steady_clock::now();
+            while (chrono::duration_cast<chrono::seconds>(chrono::steady_clock::now() - transfer_start_time).count() < 5)
+            {
+                Message msg;
+                if (recvfrom(server_socket, &msg, sizeof(msg), 0, NULL, NULL) > 0)
+                {
+                    if (msg.type == Type::STATE_TRANSFER_PAYLOAD) {
+                        applyStatePayload(msg);
+                    }
+                } else {
+                    break;
+                }
+            }
+            log_with_timestamp("[" + my_ip + "] [LÍDER] Sincronização concluída ou timeout.");
+        }
+    }
+     // =======================================================================
+
 
     thread heartbeat_thread(&Server::sendHeartbeats, this);
     thread server_listener_thread(&Server::listenForServerMessages, this);
@@ -840,4 +828,4 @@ int main(int argc, char *argv[])
     Server server(client_disc_port, client_req_port, server_comm_port);
     server.start();
     return 0;
-} 
+}
