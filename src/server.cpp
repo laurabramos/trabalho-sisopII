@@ -563,7 +563,7 @@ bool Server::replicateToBackups(const Message& client_request, const struct sock
                 }
             } else {
                 // recvfrom retornou -1 (timeout) ou erro
-                log_with_timestamp("[" + my_ip + "] [LEADER] AVISO: Timeout esperando ACK de " + backup_info.ip_address + " (tentativa " + to_string(attempt + 1) + ")");
+                //log_with_timestamp("[" + my_ip + "] [LEADER] AVISO: Timeout esperando ACK de " + backup_info.ip_address + " (tentativa " + to_string(attempt + 1) + ")");
             }
         }
 
