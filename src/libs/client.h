@@ -13,6 +13,7 @@ public:
     ~Client();
     
     std::string discoverServer(int Discovery_port, int Request_Port); 
+    bool sendOneRequest(uint32_t num, std::string& currentServerIP, int requestPort);
     bool sendNum(const std::string& serverIP, int Request_Port);
 
 private:
