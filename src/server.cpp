@@ -51,7 +51,11 @@ Server::~Server() {
 // --- ARQUITETURA PRINCIPAL ---
 
 void Server::start() {
+
     thread client_comm_thread(&Server::receiveNumbers, this);
+
+    thread client_discovery_thread(&Server::listenForClientDiscovery, this);
+
 
     while (true) {
         findAndElect(); 
@@ -73,6 +77,7 @@ void Server::start() {
     }
     
     client_comm_thread.join();
+    client_discovery_thread.join();
 }
 
 void Server::findAndElect() {
@@ -264,6 +269,37 @@ void Server::listenForBackupMessages() {
     }
 }
 
+
+void Server::listenForClientDiscovery() {
+    // Esta thread cria e gerencia seu próprio socket na porta de descoberta.
+    int discovery_socket = createSocket(this->client_discovery_port);
+    if (discovery_socket == -1) {
+        log_with_timestamp("[" + my_ip + "] ERRO CRÍTICO: Falha ao criar socket de descoberta de cliente.");
+        return;
+    }
+
+    while (true) {
+        Message msg;
+        struct sockaddr_in clientAddr;
+        socklen_t clientLen = sizeof(clientAddr);
+        
+        // Espera por uma mensagem de descoberta
+        int received = recvfrom(discovery_socket, &msg, sizeof(Message), 0, (struct sockaddr*)&clientAddr, &clientLen);
+
+        if (received > 0 && msg.type == Type::DESC) {
+            // Apenas o líder deve responder.
+            if (this->role == ServerRole::LEADER) {
+                log_with_timestamp("[" + my_ip + "] [LEADER] Recebido pedido de descoberta de " + string(inet_ntoa(clientAddr.sin_addr)));
+                // Chama a função de resposta, passando o socket correto.
+                handleClientDiscovery(discovery_socket, clientAddr);
+            }
+        }
+    }
+    close(discovery_socket);
+}
+
+
+
 void Server::receiveNumbers() {
     int numSocket = createSocket(client_request_port);
     if (numSocket == -1) { return; }
@@ -312,19 +348,23 @@ void Server::receiveNumbers() {
 }
 
 void Server::printInicio() { log_with_timestamp("num_reqs 0 total_sum 0"); }
-void Server::handleClientDiscovery(const struct sockaddr_in &fromAddr)
-{
+
+void Server::handleClientDiscovery(int discovery_socket, const struct sockaddr_in &fromAddr) {
     string clientIP = inet_ntoa(fromAddr.sin_addr);
 
     Message response = {Type::DESC_ACK, 0, 0};
-    sendto(this->client_socket, &response, sizeof(Message), 0, (struct sockaddr *)&fromAddr, sizeof(fromAddr));
+    
+    // Use o socket passado como parâmetro, não this->client_socket
+    sendto(discovery_socket, &response, sizeof(Message), 0, (struct sockaddr *)&fromAddr, sizeof(fromAddr));
 
     lock_guard<mutex> lock(participantsMutex);
-    if (!checkList(clientIP))
-    {
+    // A lógica de adicionar participante é opcional na descoberta, mas mantida.
+    // O participante será de fato criado ao receber a primeira requisição REQ.
+    if (!checkList(clientIP)) {
         participants.push_back({clientIP, 0, 0, 0});
     }
 }
+
 bool Server::replicateToBackups(const Message &client_request, const struct sockaddr_in &client_addr, const tableClient &client_state, const tableAgregation &server_state)
 {
     std::vector<ServerInfo> backups_to_notify;
