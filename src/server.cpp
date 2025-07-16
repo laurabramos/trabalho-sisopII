@@ -474,43 +474,98 @@ void Server::printInicio()
     log_with_timestamp("num_reqs 0 total_sum 0");
 }
 
-void Server::receiveNumbers() {
-    int numSocket = createSocket(this->client_request_port);
-    if (numSocket == -1) return;
-    
+void Server::handleIncomingMessages(int numSocket) {
     while (this->role == ServerRole::LEADER) {
         Message number;
         struct sockaddr_in clientAddr;
         socklen_t clientLen = sizeof(clientAddr);
+
         int received = recvfrom(numSocket, &number, sizeof(Message), 0, (struct sockaddr*)&clientAddr, &clientLen);
-        
+
         if (received > 0 && number.type == Type::REQ) {
             string clientIP = inet_ntoa(clientAddr.sin_addr);
-            
-            if (isDuplicateRequest(clientIP, number.seq)) {
-            } else {
-              
+
+            if (!isDuplicateRequest(clientIP, number.seq)) {
                 tableClient clientState = updateParticipant(clientIP, number.seq, number.num);
                 updateSumTable(number.seq, number.num);
                 printParticipants(clientIP);
+
                 tableAgregation server_state_copy;
                 {
                     lock_guard<mutex> lock(sumMutex);
                     server_state_copy = this->sumTotal;
                 }
+
                 replicateToBackups(number, clientAddr, clientState, server_state_copy);
+
                 Message confirmation;
                 confirmation.type = Type::REQ_ACK;
                 confirmation.seq = number.seq;
                 confirmation.total_sum = clientState.last_sum;
                 confirmation.total_reqs = clientState.last_req;
-                sendto(numSocket, &confirmation, sizeof(Message), 0, (struct sockaddr *)&clientAddr, clientLen);
 
+                sendto(numSocket, &confirmation, sizeof(Message), 0, (struct sockaddr *)&clientAddr, clientLen);
             }
         }
     }
+}
+
+void Server::receiveNumbers() {
+    int numSocket = createSocket(this->client_request_port);
+    if (numSocket == -1) return;
+
+    const int maxThreads = 3;
+    vector<thread> workers;
+
+    for (int i = 0; i < maxThreads; ++i) {
+        workers.emplace_back(&Server::handleIncomingMessages, this, numSocket);
+    }
+
+    for (auto& t : workers) {
+        if (t.joinable())
+            t.join();  // Ou use t.detach() se quiser threads não bloqueantes
+    }
+
     close(numSocket);
 }
+
+// void Server::receiveNumbers() {
+//     int numSocket = createSocket(this->client_request_port);
+//     if (numSocket == -1) return;
+    
+//     while (this->role == ServerRole::LEADER) {
+//         Message number;
+//         struct sockaddr_in clientAddr;
+//         socklen_t clientLen = sizeof(clientAddr);
+//         int received = recvfrom(numSocket, &number, sizeof(Message), 0, (struct sockaddr*)&clientAddr, &clientLen);
+        
+//         if (received > 0 && number.type == Type::REQ) {
+//             string clientIP = inet_ntoa(clientAddr.sin_addr);
+            
+//             if (isDuplicateRequest(clientIP, number.seq)) {
+//             } else {
+              
+//                 tableClient clientState = updateParticipant(clientIP, number.seq, number.num);
+//                 updateSumTable(number.seq, number.num);
+//                 printParticipants(clientIP);
+//                 tableAgregation server_state_copy;
+//                 {
+//                     lock_guard<mutex> lock(sumMutex);
+//                     server_state_copy = this->sumTotal;
+//                 }
+//                 replicateToBackups(number, clientAddr, clientState, server_state_copy);
+//                 Message confirmation;
+//                 confirmation.type = Type::REQ_ACK;
+//                 confirmation.seq = number.seq;
+//                 confirmation.total_sum = clientState.last_sum;
+//                 confirmation.total_reqs = clientState.last_req;
+//                 sendto(numSocket, &confirmation, sizeof(Message), 0, (struct sockaddr *)&clientAddr, clientLen);
+
+//             }
+//         }
+//     }
+//     close(numSocket);
+// }
 
 bool Server::replicateToBackups(const Message& client_request, const struct sockaddr_in& client_addr, const tableClient& client_state, const tableAgregation& server_state)
 {
