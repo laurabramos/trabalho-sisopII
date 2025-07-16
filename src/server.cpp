@@ -367,39 +367,30 @@ void Server::receiveNumbers()
             if (role == ServerRole::LEADER)
             {
                 string clientIP = inet_ntoa(clientAddr.sin_addr);
-                if (isDuplicateRequest(clientIP, number.seq))
-                {
-                    printRepet(clientIP, number.seq);
 
-                    Message confirmation = {};
-                    confirmation.type = Type::REQ_ACK;
-                    confirmation.seq = number.seq;
+                // ================== LÓGICA ROBUSTA DE PROCESSAMENTO ==================
 
+                // Pega o último 'seq' do cliente. Inicializa com 0 se for novo.
+                uint32_t last_known_seq = 0;
+                { // Escopo para o lock
                     lock_guard<mutex> lock(participantsMutex);
-                    for (const auto &participant : participants)
+                    for (const auto &p : participants)
                     {
-                        if (participant.address == clientIP)
+                        if (p.address == clientIP)
                         {
-                            confirmation.total_sum = participant.last_sum;
-                            confirmation.total_reqs = participant.last_req;
+                            last_known_seq = p.last_req;
                             break;
                         }
                     }
-                    sendto(numSocket, &confirmation, sizeof(confirmation), 0, (struct sockaddr *)&clientAddr, clientLen);
                 }
-                else
+
+                // CASO 1: Requisição é a próxima esperada.
+                if (number.seq == last_known_seq + 1)
                 {
                     tableClient clientState = updateParticipant(clientIP, number.seq, number.num);
                     updateSumTable(number.seq, number.num);
                     printParticipants(clientIP);
-
-                    tableAgregation server_state_copy;
-                    {
-                        lock_guard<mutex> lock(sumMutex);
-                        server_state_copy = this->sumTotal;
-                    }
-                    // replicateToBackups(number, clientAddr, clientState, server_state_copy);
-
+                    // ... (lógica de replicação e ACK aqui) ...
                     Message confirmation = {};
                     confirmation.type = Type::REQ_ACK;
                     confirmation.seq = number.seq;
@@ -407,9 +398,38 @@ void Server::receiveNumbers()
                     confirmation.total_reqs = clientState.last_req;
                     sendto(numSocket, &confirmation, sizeof(confirmation), 0, (struct sockaddr *)&clientAddr, clientLen);
                 }
+                // CASO 2: Requisição é antiga ou uma retransmissão.
+                else if (number.seq <= last_known_seq)
+                {
+                    printRepet(clientIP, number.seq);
+                    // Reenvia o ACK para a requisição duplicada
+                    Message confirmation = {};
+                    confirmation.type = Type::REQ_ACK;
+                    confirmation.seq = number.seq;
+                    { // Escopo para o lock
+                        lock_guard<mutex> lock(participantsMutex);
+                        for (const auto &p : participants)
+                        {
+                            if (p.address == clientIP)
+                            {
+                                confirmation.total_sum = p.last_sum;
+                                confirmation.total_reqs = p.last_req;
+                                break;
+                            }
+                        }
+                    }
+                    sendto(numSocket, &confirmation, sizeof(confirmation), 0, (struct sockaddr *)&clientAddr, clientLen);
+                }
+                // CASO 3: Requisição futura (descartar silenciosamente).
+                // O cliente reenviará se não receber o ACK da requisição que falta.
+                else
+                {
+                    log_with_timestamp("[" + my_ip + "] Requisição futura de " + clientIP + " descartada (esperado: " + to_string(last_known_seq + 1) + ", recebido: " + to_string(number.seq) + ")");
+                }
+                // ======================================================================
             }
             else
-            {
+            { // Se não for líder, redireciona
                 Message redirect_msg = {Type::NOT_LEADER};
                 if (!leader_ip.empty())
                 {
@@ -578,7 +598,7 @@ bool Server::isDuplicateRequest(const string &clientIP, uint32_t seq)
     {
         if (p.address == clientIP)
         {
-            return (p.last_req == seq);
+            return (seq <= p.last_req); // Se o seq for menor ou igual ao último, é duplicado.
         }
     }
     return false;
