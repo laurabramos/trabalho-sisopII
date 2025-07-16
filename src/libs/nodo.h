@@ -24,7 +24,7 @@ enum class Type : uint8_t {
     REPLICATION_ACK,
     HEARTBEAT,
     
-    STATE_TRANSFER_REQUEST,
+    //STATE_TRANSFER_REQUEST,
     STATE_TRANSFER_PAYLOAD
 };
 
