@@ -338,51 +338,33 @@ void Server::handleServerDiscovery(const struct sockaddr_in &fromAddr)
 
 void Server::listenForBackupMessages()
 {
+    // CORREÇÃO: Reintroduzida a lógica de esvaziar o buffer para evitar timeouts.
     while (role == ServerRole::BACKUP)
     {
-        setSocketTimeout(server_socket, 1); // Timeout curto para não bloquear o loop
+        setSocketTimeout(server_socket, 0); // Modo não-bloqueante
+
         Message msg;
         struct sockaddr_in from_addr;
         socklen_t from_len = sizeof(from_addr);
 
-        if (recvfrom(server_socket, &msg, sizeof(msg), 0, (struct sockaddr *)&from_addr, &from_len) > 0)
+        while (recvfrom(server_socket, &msg, sizeof(msg), 0, (struct sockaddr *)&from_addr, &from_len) > 0)
         {
             string from_ip = inet_ntoa(from_addr.sin_addr);
 
-            // Se a mensagem é um HEARTBEAT e vem do líder que eu conheço
             if (msg.type == Type::HEARTBEAT && from_ip == this->leader_ip)
             {
-                // Atualiza o timestamp do último heartbeat recebido
                 last_heartbeat_time = chrono::steady_clock::now();
             }
-            // ***** LÓGICA PARA PROCESSAR A REPLICAÇÃO *****
             else if (msg.type == Type::REPLICATION_UPDATE && from_ip == this->leader_ip)
             {
-                log_with_timestamp("[" + my_ip + "] [BACKUP] Recebida atualização de estado do líder.");
                 applyReplicationState(msg);
-
-                // Envia o ACK da replicação de volta para o líder
                 Message ack_msg = {Type::REPLICATION_ACK, msg.seq, 0};
                 sendto(server_socket, &ack_msg, sizeof(ack_msg), 0, (struct sockaddr *)&from_addr, from_len);
             }
-            else if (msg.type == Type::STATE_TRANSFER_PAYLOAD && from_ip == this->leader_ip)
-            {
-                // Se ip_addr for 0, é a mensagem de estado global
-                if (msg.ip_addr == 0)
-                {
-                    lock_guard<mutex> lock(sumMutex);
-                    sumTotal.sum = msg.total_sum_server;
-                    sumTotal.num_reqs = msg.total_reqs_server;
-                    log_with_timestamp("[" + my_ip + "] [BACKUP] Estado global sincronizado: " + to_string(sumTotal.sum));
-                }
-                else
-                { // Senão, é o estado de um participante
-                    struct in_addr client_addr = {.s_addr = msg.ip_addr};
-                    setParticipantState(inet_ntoa(client_addr), msg.seq, msg.num, msg.total_sum, msg.seq);
-                    log_with_timestamp("[" + my_ip + "] [BACKUP] Estado do participante " + string(inet_ntoa(client_addr)) + " sincronizado.");
-                }
-            }
+            // CORREÇÃO: Não precisa mais receber STATE_TRANSFER_PAYLOAD aqui,
+            // pois isso agora é feito em findAndElect.
         }
+        this_thread::sleep_for(chrono::milliseconds(100));
     }
 }
 
