@@ -544,6 +544,7 @@ void Server::receiveNumbers() {
             string clientIP = inet_ntoa(clientAddr.sin_addr);
             
             if (isDuplicateRequest(clientIP, number.seq)) {
+                cout << "gente, aqui ta duplicadinhokkkkkk" << endl;
             } else {
               
                 tableClient clientState = updateParticipant(clientIP, number.seq, number.num);
@@ -561,8 +562,9 @@ void Server::receiveNumbers() {
                 confirmation.total_sum = clientState.last_sum;
                 confirmation.total_reqs = clientState.last_req;
                 sendto(numSocket, &confirmation, sizeof(Message), 0, (struct sockaddr *)&clientAddr, clientLen);
-
             }
+        } else {
+            cout << "gente, deu erro aqui" << endl;
         }
     }
     close(numSocket);
