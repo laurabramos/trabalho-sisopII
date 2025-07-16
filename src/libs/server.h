@@ -59,7 +59,7 @@ private:
     void handleClientDiscovery(int discovery_socket, const struct sockaddr_in& fromAddr);
     
     // Funções de negócio e replicação
-    void Server::proactiveStateTransfer(const std::string &successor_ip);
+    void proactiveStateTransfer(const std::string &successor_ip);
     void applyStatePayload(const Message& msg);
     bool isDuplicateRequest(const std::string& clientIP, uint32_t seq);
     void applyReplicationState(const Message& replication_msg);
