@@ -534,7 +534,7 @@ void Server::receiveNumbers() {
     if (numSocket == -1) return;
     
     while (this->role == ServerRole::LEADER) {
-        cout << "estou escutando gurizadinha" << endl;
+        //cout << "estou escutando gurizadinha" << endl;
         Message number;
         struct sockaddr_in clientAddr;
         socklen_t clientLen = sizeof(clientAddr);
@@ -571,7 +571,7 @@ void Server::receiveNumbers() {
                 sendto(numSocket, &confirmation, sizeof(Message), 0, (struct sockaddr *)&clientAddr, clientLen);
             }
         } else {
-            cout << "gente, deu erro aqui" << endl;
+            //cout << "gente, deu erro aqui" << endl;
         }
     }
     close(numSocket);
@@ -689,12 +689,7 @@ void Server::runAsBackup()
                 {
                     const int ACK_BURST_COUNT = 3;
                     Message ack_msg = {Type::REPLICATION_ACK, 0, msg.seq};
-
-                    for (int i = 0; i < ACK_BURST_COUNT; ++i) {
-                        sendto(server_socket, &ack_msg, sizeof(ack_msg), 0, (struct sockaddr *)&from_addr, from_len);
-                        this_thread::sleep_for(chrono::milliseconds(10));
-                    }
-
+                    
                     struct in_addr original_client_addr;
                     original_client_addr.s_addr = msg.ip_addr;
                     string client_ip_str = inet_ntoa(original_client_addr);
@@ -708,6 +703,12 @@ void Server::runAsBackup()
                 
                     cout << "[BACKUP] ";
                     printParticipants(client_ip_str);
+
+                    for (int i = 0; i < ACK_BURST_COUNT; ++i) {
+                        sendto(server_socket, &ack_msg, sizeof(ack_msg), 0, (struct sockaddr *)&from_addr, from_len);
+                        this_thread::sleep_for(chrono::milliseconds(10));
+                    }
+
                 }
                 break;
             case Type::ELECTION:
