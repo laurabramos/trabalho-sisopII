@@ -569,9 +569,9 @@ bool Server::replicateToBackups(const Message& client_request, const struct sock
 
         if (ack_received) {
             successful_acks++;
-            log_with_timestamp("[" + my_ip + "] [LEADER] ACK recebido de " + backup_info.ip_address);
+            //log_with_timestamp("[" + my_ip + "] [LEADER] ACK recebido de " + backup_info.ip_address);
         } else {
-            log_with_timestamp("[" + my_ip + "] [LEADER] ERRO: Backup " + backup_info.ip_address + " não respondeu após " + to_string(MAX_ATTEMPTS) + " tentativas. Pode estar offline.");
+            //log_with_timestamp("[" + my_ip + "] [LEADER] ERRO: Backup " + backup_info.ip_address + " não respondeu após " + to_string(MAX_ATTEMPTS) + " tentativas. Pode estar offline.");
         }
     } 
     setSocketTimeout(this->server_socket, 0);
@@ -598,7 +598,7 @@ void Server::setParticipantState(const std::string& clientIP, uint32_t seq, uint
 void Server::runAsBackup()
 {
     thread failure_detection_thread(&Server::checkForLeaderFailure, this);
-    log_with_timestamp("[" + my_ip + "] Papel de BACKUP assumido.).");
+    log_with_timestamp("[" + my_ip + "] Papel de BACKUP assumido.");
 
     while (this->role == ServerRole::BACKUP)
     {
