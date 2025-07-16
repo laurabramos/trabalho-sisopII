@@ -34,9 +34,9 @@ enum class Type : uint8_t {
     I_AM_ALIVE,
     ARE_YOU_ALIVE,
 
-    REQUEST_STATE_VOTE,  
-    STATE_VOTE_RESPONSE, 
-    SEND_FULL_STATE,     
+    REQUEST_STATE_SUMMARY,  // Pergunta do líder: "Qual seu total de requisições?"
+    STATE_SUMMARY_RESPONSE, // Resposta do backup: "Meu total é X."
+    REQUEST_FULL_STATE,     // Pedido do líder ao melhor backup: "Me envie seu estado completo."
     STATE_SYNC_UPDATE  
 };
 
