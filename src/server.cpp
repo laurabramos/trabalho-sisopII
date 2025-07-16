@@ -441,7 +441,7 @@ void Server::checkForLeaderFailure()
         if (this->election_in_progress)
         {
             continue;
-        }
+        }//aaaa
 
         auto time_since_last_hb = chrono::duration_cast<chrono::seconds>(chrono::steady_clock::now() - last_heartbeat_time).count();
 
