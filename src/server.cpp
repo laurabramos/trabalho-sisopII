@@ -309,9 +309,20 @@ void Server::listenForBackupMessages()
                 // Atualiza o timestamp do último heartbeat recebido
                 last_heartbeat_time = chrono::steady_clock::now();
             }
+            // ***** LÓGICA PARA PROCESSAR A REPLICAÇÃO *****
+            else if (msg.type == Type::REPLICATION_UPDATE && from_ip == this->leader_ip)
+            {
+                log_with_timestamp("[" + my_ip + "] [BACKUP] Recebida atualização de estado do líder.");
+                applyReplicationState(msg);
+
+                // Envia o ACK da replicação de volta para o líder
+                Message ack_msg = {Type::REPLICATION_ACK, msg.seq, 0};
+                sendto(server_socket, &ack_msg, sizeof(ack_msg), 0, (struct sockaddr *)&from_addr, from_len);
+            }
         }
     }
 }
+
 
 void Server::listenForClientDiscovery()
 {
@@ -389,8 +400,16 @@ void Server::receiveNumbers()
                 {
                     tableClient clientState = updateParticipant(clientIP, number.seq, number.num);
                     updateSumTable(number.seq, number.num);
-                    printParticipants(clientIP);
-                    // ... (lógica de replicação e ACK aqui) ...
+                    printParticipants(clientIP, "[LEADER] ");
+                    
+                    tableAgregation server_state_copuy;
+                    {
+                        lock_guard<mutex> lock(sumMutex);
+                        server_state_copy = this->sumTotal;
+                    }
+
+                    replicateToBackups(number, clientAddr, clientState, server_state_copy);
+
                     Message confirmation = {};
                     confirmation.type = Type::REQ_ACK;
                     confirmation.seq = number.seq;
@@ -535,6 +554,20 @@ bool Server::replicateToBackups(const Message &client_request, const struct sock
     return true;
 }
 
+void Server::applyReplicationState(const Message& msg) {
+    // Extrai o IP do cliente original da mensagem de replicação
+    struct in_addr client_addr_struct = { .s_addr = msg.ip_addr };
+    string clientIP = inet_ntoa(client_addr_struct);
+
+    // Atualiza as tabelas de estado do backup
+    updateParticipant(clientIP, msg.seq, msg.num);
+    updateSumTable(msg.seq, msg.num);
+
+    // Imprime o log com o prefixo [BACKUP]
+    printParticipants(clientIP, "[BACKUP]");
+}
+
+
 void Server::setParticipantState(const std::string &clientIP, uint32_t seq, uint32_t value, uint64_t client_sum, uint32_t client_reqs)
 {
     lock_guard<mutex> lock(participantsMutex);
@@ -551,7 +584,7 @@ void Server::setParticipantState(const std::string &clientIP, uint32_t seq, uint
     participants.push_back({clientIP, client_reqs, client_sum, value});
 }
 
-void Server::printParticipants(const std::string &clientIP)
+void Server::printParticipants(const std::string &clientIP, const std::string &role_prefix)
 {
     lock_guard<mutex> lock_participants(participantsMutex);
     lock_guard<mutex> lock_sum(sumMutex);
@@ -560,7 +593,9 @@ void Server::printParticipants(const std::string &clientIP)
     {
         if (p.address == clientIP)
         {
-            string msg = " client " + p.address +
+            // Adiciona o prefixo (se houver) à mensagem de log
+            string prefix = role_prefix.empty() ? "" : role_prefix + " ";
+            string msg = prefix + "client " + p.address +
                          " id_req " + to_string(p.last_req) +
                          " value " + to_string(p.last_value) +
                          " num_reqs " + to_string(sumTotal.num_reqs) +
