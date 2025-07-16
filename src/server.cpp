@@ -544,7 +544,7 @@ void Server::receiveNumbers() {
             string clientIP = inet_ntoa(clientAddr.sin_addr);
             
             if (isDuplicateRequest(clientIP, number.seq)) {
-                cout << "gente, aqui ta duplicadinhokkkkkk" << endl;
+                printRepet(clientIP,number.seq);
             } else {
               
                 tableClient clientState = updateParticipant(clientIP, number.seq, number.num);
