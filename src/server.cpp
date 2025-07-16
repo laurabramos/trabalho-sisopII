@@ -528,6 +528,22 @@ void Server::handleClientDiscovery(int discovery_socket, const struct sockaddr_i
     }
 }
 
+void Server::setParticipantState(const std::string &clientIP, uint32_t seq, uint32_t value, uint64_t client_sum, uint32_t client_reqs)
+{
+    lock_guard<mutex> lock(participantsMutex);
+    for (auto &p : participants)
+    {
+        if (p.address == clientIP)
+        {
+            p.last_sum = client_sum;
+            p.last_req = client_reqs;
+            p.last_value = value;
+            return;
+        }
+    }
+    participants.push_back({clientIP, client_reqs, client_sum, value});
+}
+
 bool Server::isDuplicateRequest(const string &clientIP, uint32_t seq)
 {
     lock_guard<mutex> lock(participantsMutex);
