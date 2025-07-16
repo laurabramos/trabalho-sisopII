@@ -545,6 +545,7 @@ void Server::receiveNumbers() {
             
             if (isDuplicateRequest(clientIP, number.seq)) {
                 printRepet(clientIP,number.seq);
+                sendto(numSocket, &confirmation, sizeof(Message), 0, (struct sockaddr *)&clientAddr, clientLen);
             } else {
               
                 tableClient clientState = updateParticipant(clientIP, number.seq, number.num);
