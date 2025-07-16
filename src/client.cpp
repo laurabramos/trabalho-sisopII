@@ -139,6 +139,11 @@ bool Client::sendOneRequest(uint32_t num, std::string& currentServerIP, int requ
     return confirmed;
 }
 
+uint32_t Client::getCurrentSeq() {
+    return this->current_seq;
+}
+
+
 
 int main(int argc, char* argv[]) {
     if (argc < 2) {
@@ -152,37 +157,39 @@ int main(int argc, char* argv[]) {
     Client client(discovery_port);
     string serverIP = "";
 
-    // Loop de descoberta inicial
-    while (serverIP.empty()) {
-        serverIP = client.discoverServer(discovery_port, request_port);
-        if (serverIP.empty()) {
-            cout << "Não foi possível encontrar um servidor. Tentando novamente em 5 segundos..." << endl;
-            sleep(5);
-        }
-    }
-
-    cout << "Conectado ao líder " << serverIP << ". Digite os números (Ctrl+D para encerrar):" << endl;
+    cout << "Digite os números (Ctrl+D para encerrar):" << endl;
     
     uint32_t num;
+    // O loop principal agora lê um número por vez da entrada padrão.
     while (std::cin >> num) {
-        // Tenta enviar o número. Se falhar, tenta redescobrir o servidor e reenviar.
-        if (!client.sendOneRequest(num, serverIP, request_port)) {
-            cout << "Falha na comunicação com o servidor " << serverIP << "." << endl;
+        
+        bool numeroEnviadoComSucesso = false;
+        // Entra em um loop de persistência para o número atual.
+        // SÓ SAI DESTE LOOP QUANDO O NÚMERO FOR CONFIRMADO.
+        while (!numeroEnviadoComSucesso) {
             
-            // Entra em modo de recuperação
-            serverIP = "";
-            while (serverIP.empty()) {
-                cout << "Tentando encontrar um novo servidor..." << endl;
+            // FASE 1: GARANTIR QUE TEMOS UM LÍDER
+            if (serverIP.empty()) {
+                cout << "Procurando um líder..." << endl;
                 serverIP = client.discoverServer(discovery_port, request_port);
-                if (serverIP.empty()) sleep(5);
+                if (serverIP.empty()) {
+                    cout << "Nenhum líder encontrado. Tentando novamente em 5 segundos..." << endl;
+                    sleep(5);
+                    continue; // Volta ao início do loop de persistência para tentar descobrir de novo.
+                }
+                cout << "Conectado ao líder " << serverIP << "." << endl;
             }
-            cout << "Reconectado ao líder " << serverIP << ". Reenviando número..." << endl;
-            
-            // Tenta reenviar o mesmo número para o novo líder
-            if (!client.sendOneRequest(num, serverIP, request_port)) {
-                 cout << "Falha ao reenviar o número. Desistindo deste número." << endl;
-                 // Neste caso, optamos por não incrementar o 'current_seq' e pular o número.
-                 // Uma lógica mais complexa poderia usar uma fila de não-confirmados.
+
+            // FASE 2: TENTAR ENVIAR O NÚMERO PARA O LÍDER ATUAL
+            cout << "Enviando número " << num << " (seq=" << client.getCurrentSeq() << ") para " << serverIP << "..." << endl;
+            if (client.sendOneRequest(num, serverIP, request_port)) {
+                // Sucesso! O ACK foi recebido.
+                numeroEnviadoComSucesso = true; 
+            } else {
+                // Falha na comunicação com o líder conhecido.
+                cout << "Falha na comunicação com o líder " << serverIP << ". O líder pode ter mudado." << endl;
+                serverIP = ""; // Invalida o IP do líder para forçar uma nova descoberta.
+                // O loop de persistência continuará, e na próxima iteração ele entrará na FASE 1.
             }
         }
     }
