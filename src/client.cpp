@@ -13,201 +13,231 @@
 #include <limits>
 #include <string>
 #include <queue>
+#include <thread>
+#include <mutex>
 
-#define MAX_ATTEMPTS 5
-#define TIMEOUT 5
-#define MAX_SEND_ATTEMPTS 5
+#define TIMEOUT_SEC 2
+#define MAX_SEND_ATTEMPTS 3
 
 using namespace std;
 
-Client::Client(int Discovery_Port) {
-
+Client::Client(int discovery_port, int server_comm_port) {
+    this->discovery_port = discovery_port;
+    this->server_comm_port = server_comm_port;
 }
 
 Client::~Client() {
-    
+    stopListener();
 }
 
-string Client::discoverServer(int Discovery_Port, int Request_Port) {
-    int discoverySocket = createSocket(0);
+bool Client::isRunning() const {
+    return this->running;
+}
 
-    if (discoverySocket == -1) {
-        perror("Erro ao criar socket de descoberta");
-        return "";
+void Client::startListener() {
+    this->running = true;
+    this->coordinator_listener_thread = std::thread(&Client::listenForCoordinator, this);
+    cout << "[INFO] Listener de Coordenador iniciado." << endl;
+}
+
+void Client::stopListener() {
+    this->running = false;
+    // Pequena artimanha para desbloquear o recvfrom e permitir que a thread termine
+    int sock = createSocket(0);
+    if(sock != -1) {
+        sockaddr_in addr {};
+        addr.sin_family = AF_INET;
+        addr.sin_port = htons(this->server_comm_port);
+        addr.sin_addr.s_addr = inet_addr("127.0.0.1");
+        Message dummy_msg = {Type::DESC, 0, 0}; // Qualquer mensagem serve
+        sendto(sock, &dummy_msg, sizeof(dummy_msg), 0, (struct sockaddr*)&addr, sizeof(addr));
+        close(sock);
     }
-    setSocketBroadcastOptions(discoverySocket);
     
-    Message message = {Type::DESC, 0, 0}; 
-    int attempts = 0;
+    if (this->coordinator_listener_thread.joinable()) {
+        this->coordinator_listener_thread.join();
+    }
+}
 
-    broadcastAddr.sin_family = AF_INET;
-    broadcastAddr.sin_port = htons(Discovery_Port);
-    broadcastAddr.sin_addr.s_addr = inet_addr(BROADCAST_ADDR);
-    
-    cout << "Procurando servidor na rede..." << endl;
+void Client::listenForCoordinator() {
+    int listenerSocket = createSocket(this->server_comm_port);
+    if (listenerSocket == -1) {
+        cerr << "[ERRO] Não foi possível criar o socket do listener. A thread será encerrada." << endl;
+        return;
+    }
+    setSocketTimeout(listenerSocket, 0); // Bloqueia indefinidamente até receber algo
 
-    while (attempts < MAX_ATTEMPTS) {
-        sendto(discoverySocket, &message, sizeof(message), 0,
-               (struct sockaddr*)&broadcastAddr, sizeof(broadcastAddr));
+    cout << "[LISTENER] Aguardando mensagens de broadcast do Coordenador na porta " << this->server_comm_port << endl;
 
-        fd_set read_fds;
-        struct timeval timeout;
-        timeout.tv_sec = TIMEOUT;
-        timeout.tv_usec = 0;
-        FD_ZERO(&read_fds);
-        FD_SET(discoverySocket, &read_fds);
+    while (this->running) {
+        Message msg;
+        struct sockaddr_in fromAddr;
+        socklen_t fromLen = sizeof(fromAddr);
 
-        int selectResult = select(discoverySocket + 1, &read_fds, NULL, NULL, &timeout);
-        
-        if (selectResult > 0 && FD_ISSET(discoverySocket, &read_fds)) {
-            Message recMessage;
-            sockaddr_in fromAddr{};
-            socklen_t fromLen = sizeof(fromAddr);
-            int received = recvfrom(discoverySocket, &recMessage, sizeof(Message), 0,
-                                    (struct sockaddr*)&fromAddr, &fromLen);
+        recvfrom(listenerSocket, &msg, sizeof(Message), 0, (struct sockaddr*)&fromAddr, &fromLen);
 
-            if (received > 0 && recMessage.type == Type::DESC_ACK) {
-                std::string serverIP = inet_ntoa(fromAddr.sin_addr);
-                char buffer[21];
+        if (!this->running) break;
+
+        if (msg.type == Type::COORDINATOR) {
+            string new_leader_ip = inet_ntoa(fromAddr.sin_addr);
+            
+            lock_guard<mutex> lock(ip_mutex);
+            if (this->serverIP != new_leader_ip) {
                 time_t now = time(0);
-                struct tm *ltm = localtime(&now);
-                strftime(buffer, sizeof(buffer), "%Y-%m-%d %H:%M:%S ", ltm);
-                cout << buffer << "server_addr " << serverIP << endl;
-                
-                close(discoverySocket); 
-                return serverIP; 
+                char buffer[100];
+                strftime(buffer, sizeof(buffer), "%Y-%m-%d %H:%M:%S", localtime(&now));
+                cout << endl << buffer << " [SISTEMA] Novo líder detectado em " << new_leader_ip << ". Atualizando endereço." << endl;
+                this->serverIP = new_leader_ip;
             }
         }
-        
-        cout << "Tentativa " << attempts + 1 << ": Nenhuma resposta do servidor.\n";
-        attempts++;
     }
-
-    cout << "Limite de tentativas atingido. Não foi possível encontrar o servidor.\n";
-    close(discoverySocket); 
-    return ""; 
+    close(listenerSocket);
+    cout << "[INFO] Listener de Coordenador encerrado." << endl;
 }
 
-bool Client::sendNum(const std::string& serverIP, int Request_Port) {
+void Client::discoverInitialServer() {
+    int discoverySocket = createSocket(0);
+    if (discoverySocket == -1) {
+        perror("Erro fatal ao criar socket de descoberta");
+        exit(1); // Não é possível se recuperar disso
+    }
+    setSocketBroadcastOptions(discoverySocket);
+    setSocketTimeout(discoverySocket, TIMEOUT_SEC);
+    
+    Message message = {Type::DESC, 0, 0}; 
+    
+    struct sockaddr_in broadcastAddr;
+    broadcastAddr.sin_family = AF_INET;
+    broadcastAddr.sin_port = htons(this->discovery_port);
+    broadcastAddr.sin_addr.s_addr = inet_addr(BROADCAST_ADDR);
+    
+    cout << "Procurando servidor inicial na rede (tentativas contínuas)..." << endl;
+
+    while (this->running) {
+        sendto(discoverySocket, &message, sizeof(message), 0,
+               (struct sockaddr*)&broadcastAddr, sizeof(broadcastAddr));
+        
+        Message recMessage;
+        sockaddr_in fromAddr{};
+        socklen_t fromLen = sizeof(fromAddr);
+        int received = recvfrom(discoverySocket, &recMessage, sizeof(Message), 0,
+                                (struct sockaddr*)&fromAddr, &fromLen);
+
+        if (received > 0 && recMessage.type == Type::DESC_ACK) {
+            string foundIP = inet_ntoa(fromAddr.sin_addr);
+            
+            lock_guard<mutex> lock(ip_mutex);
+            this->serverIP = foundIP;
+            
+            cout << "Servidor líder encontrado em: " << this->serverIP << endl;
+            close(discoverySocket); 
+            return; // Sai da função e do loop
+        }
+        
+        cout << "Nenhum líder encontrado. Tentando novamente em " << TIMEOUT_SEC << " segundos..." << endl;
+        // O timeout no recvfrom já cria a pausa necessária.
+    }
+    close(discoverySocket);
+}
+
+bool Client::sendNum(int request_port) {
+    string current_server_ip;
+    {
+        lock_guard<mutex> lock(ip_mutex);
+        if (this->serverIP.empty()) {
+            cerr << "[ERRO] IP do servidor desconhecido. Não é possível enviar." << endl;
+            return false;
+        }
+        current_server_ip = this->serverIP;
+    }
+
     int clientSocketUni = createSocket(0);
     if (clientSocketUni == -1) {
         perror("Erro ao criar socket unicast");
         return false;
     }
-    setSocketTimeout(clientSocketUni, 3);
+    setSocketTimeout(clientSocketUni, TIMEOUT_SEC);
 
     sockaddr_in serverAddr{};
-    memset(&serverAddr, 0, sizeof(serverAddr));
     serverAddr.sin_family = AF_INET;
-    serverAddr.sin_port = htons(Request_Port);
-    if (inet_pton(AF_INET, serverIP.c_str(), &serverAddr.sin_addr) <= 0) {
-        cerr << "ERROR invalid address/ Address not supported." << endl;
-        close(clientSocketUni);
-        return false;
-    }
+    serverAddr.sin_port = htons(request_port);
+    inet_pton(AF_INET, current_server_ip.c_str(), &serverAddr.sin_addr);
 
-    if (!this->unacked_nums.empty()) {
-        cout << "Reenviando " << this->unacked_nums.size() << " número(s) pendente(s) para o novo servidor..." << endl;
-        
-        while(!this->unacked_nums.empty()) {
-            uint32_t num_to_resend = this->unacked_nums.front();
-            bool confirmed = false;
-            int send_attempts = 0;
-
-            while (!confirmed) {
-                 if (send_attempts >= MAX_SEND_ATTEMPTS) {
-                    cout << "O novo servidor " << serverIP << " também não está respondendo. Falha na comunicação." << endl;
-                    close(clientSocketUni);
-                    return false;
-                }
-                
-                cout << "Reenviando requisição " << this->current_seq << " com o número " << num_to_resend << " (tentativa " << send_attempts + 1 << ")..." << endl;
-                Message message = {Type::REQ, num_to_resend, this->current_seq, 0, 0, 0};
-                sendto(clientSocketUni, &message, sizeof(Message), 0, (struct sockaddr*)&serverAddr, sizeof(serverAddr));
-
-                Message response;
-                socklen_t serverLen = sizeof(serverAddr);
-                int received = recvfrom(clientSocketUni, &response, sizeof(Message), 0, (struct sockaddr*)&serverAddr, &serverLen);
-
-                if (received > 0 && response.type == Type::REQ_ACK && response.seq == this->current_seq) {
-                    time_t now = time(0);
-                    struct tm *ltm = localtime(&now);
-                    char buffer[21];
-                    strftime(buffer, sizeof(buffer), "%Y-%m-%d %H:%M:%S ", ltm);
-                    cout << buffer << "server " << serverIP
-                         << " id_req " << response.seq
-                         << " value " << num_to_resend
-                         << " num_reqs " << response.seq
-                         << " total_sum " << response.total_sum << endl;
-
-                    this->current_seq++;
-                    confirmed = true;
-                    this->unacked_nums.pop(); 
-                } else {
-                    send_attempts++;
-                }
-            }
-        }
-        cout << "Todos os números pendentes foram confirmados pelo novo servidor." << endl;
-    }
-
-
-    uint32_t num;
-
-
-    while (true) {
-        if (!(std::cin >> num)) {
-            if (std::cin.eof()) {
-                break;
-            } else {
-                cerr << "Entrada inválida. Tente novamente.\n";
-                std::cin.clear();
-                std::cin.ignore(std::numeric_limits<std::streamsize>::max(), '\n');
-                continue;
-            }
-        }
-
+    // Reenvia números não confirmados
+    while(!this->unacked_nums.empty()) {
+        uint32_t num_to_resend = this->unacked_nums.front();
+        cout << "[SISTEMA] Reenviando número pendente (" << num_to_resend << ") para o servidor em " << current_server_ip << endl;
         bool confirmed = false;
-        int send_attempts = 0;
-
-        while (!confirmed) {
-            if (send_attempts >= MAX_SEND_ATTEMPTS) {
-                cout << "Servidor " << serverIP << " não está respondendo. Falha na comunicação." << endl;
-                cout << "Guardando o número " << num << " para reenviar a um novo servidor." << endl;
-                this->unacked_nums.push(num);
-                close(clientSocketUni);
-                return false;
-            }
-
-            Message message = {Type::REQ, num, this->current_seq, 0, 0, 0};
-
-            sendto(clientSocketUni, &message, sizeof(Message), 0,
-                   (struct sockaddr*)&serverAddr, sizeof(serverAddr));
+        for (int attempts = 0; attempts < MAX_SEND_ATTEMPTS && !confirmed; ++attempts) {
+            Message message = {Type::REQ, num_to_resend, this->current_seq, 0, 0, 0};
+            sendto(clientSocketUni, &message, sizeof(Message), 0, (struct sockaddr*)&serverAddr, sizeof(serverAddr));
 
             Message response;
-            socklen_t serverLen = sizeof(serverAddr);
+            if (recvfrom(clientSocketUni, &response, sizeof(Message), 0, NULL, NULL) > 0 &&
+                response.type == Type::REQ_ACK && response.seq == this->current_seq) {
+                
+                cout << "[SISTEMA] Reenvio confirmado. " << "id_req: " << response.seq << ", total_sum: " << response.total_sum << endl;
+                this->current_seq++;
+                confirmed = true;
+                this->unacked_nums.pop();
+            } else {
+                 cout << "[AVISO] Tentativa " << attempts + 1 << " de reenvio falhou." << endl;
+            }
+        }
+        if (!confirmed) {
+            cout << "[ERRO] Falha ao reenviar número pendente para " << current_server_ip << ". A comunicação pode estar instável." << endl;
+            close(clientSocketUni);
+            return false;
+        }
+    }
 
-            int received = recvfrom(clientSocketUni, &response, sizeof(Message), 0,
-                                    (struct sockaddr*)&serverAddr, &serverLen);
-
-            if (received > 0 && response.type == Type::REQ_ACK && response.seq == this->current_seq) {
+    // Loop para ler novos números
+    uint32_t num;
+    cout << "Digite um número (ou Ctrl+D para sair): ";
+    while (cin >> num) {
+        bool confirmed = false;
+        for (int send_attempts = 0; send_attempts < MAX_SEND_ATTEMPTS && !confirmed; ++send_attempts) {
+            Message message = {Type::REQ, num, this->current_seq, 0, 0, 0};
+            sendto(clientSocketUni, &message, sizeof(Message), 0, (struct sockaddr*)&serverAddr, sizeof(serverAddr));
+            
+            Message response;
+            
+            string response_ip;
+            {
+                 lock_guard<mutex> lock(ip_mutex);
+                 response_ip = this->serverIP;
+            }
+             if (current_server_ip != response_ip) {
+                 cout << "[SISTEMA] O líder mudou durante o envio. Abortando tentativa atual para usar o novo líder." << endl;
+                 this->unacked_nums.push(num);
+                 close(clientSocketUni);
+                 return false;
+             }
+            
+            if (recvfrom(clientSocketUni, &response, sizeof(Message), 0, NULL, NULL) > 0 && response.type == Type::REQ_ACK && response.seq == this->current_seq) {
                 time_t now = time(0);
-                struct tm *ltm = localtime(&now);
-                char buffer[21];
-                strftime(buffer, sizeof(buffer), "%Y-%m-%d %H:%M:%S ", ltm);
-                cout << buffer << "server " << serverIP
+                char buffer[100];
+                strftime(buffer, sizeof(buffer), "%Y-%m-%d %H:%M:%S", localtime(&now));
+                cout << buffer << " [OK] server " << current_server_ip
                      << " id_req " << response.seq
                      << " value " << num
-                     << " num_reqs " << response.seq
                      << " total_sum " << response.total_sum << endl;
 
                 this->current_seq++;
                 confirmed = true;
             } else {
-                cout << "Erro na confirmação do servidor. Reenviando requisição " << this->current_seq << " (tentativa " << send_attempts + 1 << ")...\n";
-                send_attempts++;
+                cout << "[AVISO] Tentativa " << send_attempts + 1 << " de envio falhou. Reenviando..." << endl;
             }
         }
+
+        if (!confirmed) {
+            cout << "[ERRO] O servidor " << current_server_ip << " não está respondendo." << endl;
+            cout << "[SISTEMA] Guardando o número " << num << " para tentar com um novo líder." << endl;
+            this->unacked_nums.push(num);
+            close(clientSocketUni);
+            return false;
+        }
+        cout << "Digite um número (ou Ctrl+D para sair): ";
     }
 
     close(clientSocketUni);
@@ -216,31 +246,36 @@ bool Client::sendNum(const std::string& serverIP, int Request_Port) {
 
 int main(int argc, char* argv[]) {
     if (argc < 2) {
-        cerr << "Uso: " << argv[0] << " <porta_descoberta>" << endl;
+        cerr << "Uso: " << argv[0] << " <porta_descoberta_cliente>" << endl;
         return 1;
     }
 
-    int Discovery_Port = atoi(argv[1]);
-    int Request_Port = Discovery_Port + 1;
+    int discovery_port = atoi(argv[1]);
+    int request_port = discovery_port + 1;
+    int server_comm_port = discovery_port + 2;
 
-    Client client(Discovery_Port);
+    Client client(discovery_port, server_comm_port);
 
-    while (true) {
-        std::string serverIP = client.discoverServer(Discovery_Port, Request_Port);
+    // Esta função agora bloqueia até que um líder seja encontrado.
+    client.discoverInitialServer();
 
-        if (!serverIP.empty()) {
-            if (!client.sendNum(serverIP, Request_Port)) {
-                 cout << "Tentando encontrar um novo servidor..." << endl;
-                 sleep(5);
-            } else {
-                cout << "Finalizando cliente." << endl;
-                break;
-            }
+    client.startListener();
+
+    while (client.isRunning()) {
+        if (!client.sendNum(request_port)) {
+            // Se sendNum falhar, a comunicação caiu.
+            // O listener em background irá (eventualmente) detectar o novo líder.
+            // O loop simplesmente espera e tenta novamente.
+            cout << "[SISTEMA] Comunicação com o líder perdida. Aguardando novo líder ser anunciado..." << endl;
+            this_thread::sleep_for(chrono::seconds(3));
         } else {
-            cout << "Não foi possível encontrar um servidor. Tentando novamente em 5 segundos..." << endl;
-            sleep(5);
+            // sendNum só retorna true se o stream de entrada (cin) terminar (EOF).
+            cout << "Entrada finalizada. Encerrando o cliente." << endl;
+            break;
         }
     }
+    
+    client.stopListener(); // Garante que a thread do listener seja finalizada corretamente
 
     return 0;
 }
