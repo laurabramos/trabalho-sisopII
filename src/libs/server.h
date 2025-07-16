@@ -67,6 +67,7 @@ class Server : public Nodo {
         bool checkList(const string& ip);
 
         void setParticipantState(const std::string& clientIP, uint32_t seq, uint32_t value, uint64_t client_sum, uint32_t client_reqs);
+        void synchronizeStateWithBackups();
 };
     
 #endif // SERVER_H

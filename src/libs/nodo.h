@@ -33,6 +33,11 @@ enum class Type : uint8_t {
 
     I_AM_ALIVE,
     ARE_YOU_ALIVE,
+
+    REQUEST_STATE_VOTE,  
+    STATE_VOTE_RESPONSE, 
+    SEND_FULL_STATE,     
+    STATE_SYNC_UPDATE  
 };
 
 #pragma pack(push, 1)
