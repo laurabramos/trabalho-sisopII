@@ -320,8 +320,7 @@ void Server::runAsLeader()
     thread server_listener_thread(&Server::listenForServerMessages, this);
     thread client_listener_thread(&Server::listenForClientMessages, this);
     thread client_comm_thread(&Server::receiveNumbers, this);
-    //thread heartbeat_thread(&Server::sendHeartbeats, this);
-
+   
     while (this->role == ServerRole::LEADER)
     {
         this_thread::sleep_for(chrono::seconds(1));
@@ -330,7 +329,7 @@ void Server::runAsLeader()
     server_listener_thread.join();
     client_listener_thread.join();
     client_comm_thread.join();
-    //heartbeat_thread.join();
+    
 }
 
 void Server::listenForServerMessages()
@@ -474,60 +473,7 @@ void Server::printInicio()
     log_with_timestamp("num_reqs 0 total_sum 0");
 }
 
-// void Server::handleIncomingMessages(int numSocket) {
-//     while (this->role == ServerRole::LEADER) {
-//         Message number;
-//         struct sockaddr_in clientAddr;
-//         socklen_t clientLen = sizeof(clientAddr);
 
-//         int received = recvfrom(numSocket, &number, sizeof(Message), 0, (struct sockaddr*)&clientAddr, &clientLen);
-
-//         if (received > 0 && number.type == Type::REQ) {
-//             string clientIP = inet_ntoa(clientAddr.sin_addr);
-
-//             if (!isDuplicateRequest(clientIP, number.seq)) {
-//                 tableClient clientState = updateParticipant(clientIP, number.seq, number.num);
-//                 updateSumTable(number.seq, number.num);
-//                 printParticipants(clientIP);
-
-//                 tableAgregation server_state_copy;
-//                 {
-//                     lock_guard<mutex> lock(sumMutex);
-//                     server_state_copy = this->sumTotal;
-//                 }
-
-//                 replicateToBackups(number, clientAddr, clientState, server_state_copy);
-
-//                 Message confirmation;
-//                 confirmation.type = Type::REQ_ACK;
-//                 confirmation.seq = number.seq;
-//                 confirmation.total_sum = clientState.last_sum;
-//                 confirmation.total_reqs = clientState.last_req;
-
-//                 sendto(numSocket, &confirmation, sizeof(Message), 0, (struct sockaddr *)&clientAddr, clientLen);
-//             }
-//         }
-//     }
-// }
-
-// void Server::receiveNumbers() {
-//     int numSocket = createSocket(this->client_request_port);
-//     if (numSocket == -1) return;
-
-//     const int maxThreads = 3;
-//     vector<thread> workers;
-
-//     for (int i = 0; i < maxThreads; ++i) {
-//         workers.emplace_back(&Server::handleIncomingMessages, this, numSocket);
-//     }
-
-//     for (auto& t : workers) {
-//         if (t.joinable())
-//             t.join();  // Ou use t.detach() se quiser threads não bloqueantes
-//     }
-
-//     close(numSocket);
-// }
 
 void Server::receiveNumbers() {
     int numSocket = createSocket(this->client_request_port);
@@ -652,7 +598,7 @@ void Server::setParticipantState(const std::string& clientIP, uint32_t seq, uint
     for (auto &p : participants) {
         if (p.address == clientIP) {
             p.last_sum = client_sum;
-            p.last_req = client_reqs; // O backup agora armazena o mesmo que o líder
+            p.last_req = client_reqs; 
             p.last_value = value;
             return;
         }
@@ -702,16 +648,16 @@ void Server::runAsBackup()
                         this->sumTotal.num_reqs = msg.total_reqs_server;
                     }
 
-                    // 🔄 Impressão paralela (em thread separada)
+                    
                     thread print_thread([this, client_ip_str]() {
-                        static mutex print_mutex;  // para evitar prints sobrepostos
+                        static mutex print_mutex;  
                         lock_guard<mutex> lock(print_mutex);
                         cout << "[BACKUP] ";
                         this->printParticipants(client_ip_str);
                     });
-                    print_thread.join();  // espera a thread de impressão terminar
+                    print_thread.join();  
 
-                    // ✅ Envio do ACK (sem alteração)
+                   
                     for (int i = 0; i < ACK_BURST_COUNT; ++i) {
                         sendto(server_socket, &ack_msg, sizeof(ack_msg), 0, (struct sockaddr *)&from_addr, from_len);
                         this_thread::sleep_for(chrono::milliseconds(10));
@@ -786,26 +732,15 @@ bool Server::isDuplicateRequest(const string &clientIP, uint32_t seq)
 
 bool Server::checkList(const std::string &ip)
 {
-    // std::cout << "[DEBUG] Verificando IP: " << ip << std::endl;
-    // std::cout << "[DEBUG] Lista de SERVERS:" << std::endl;
-
-    // // Primeiro, imprime toda a lista
-    // for (const auto &backup : server_list)
-    // {
-    //     std::cout << " - " << backup.ip_address << std::endl;
-    // }
-
-    // Agora, verifica se o IP está na lista
+   
     for (const auto &backup : server_list)
     {
         if (backup.ip_address == ip)
         {
-            // std::cout << "[DEBUG] IP encontrado na lista." << std::endl;
             return true;
         }
     }
 
-    // std::cout << "[DEBUG] IP não encontrado na lista." << std::endl;
     return false;
 }
 
