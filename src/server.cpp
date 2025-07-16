@@ -518,10 +518,10 @@ bool Server::replicateToBackups(const Message& client_request, const struct sock
     {
         lock_guard<mutex> lock(serverListMutex);
         if (server_list.empty()) {
-            cout << "nao tem ninguém" << endl;
+            //cout << "nao tem ninguém" << endl;
             return true; // Sucesso, pois não há backups para replicar.
         }
-        cout << "tem alguem hehehe" << endl;
+        //cout << "tem alguem hehehe" << endl;
         backups_to_notify = this->server_list;
     }
 
@@ -537,7 +537,7 @@ bool Server::replicateToBackups(const Message& client_request, const struct sock
 
     int successful_acks = 0;
     for (const auto& backup_info : backups_to_notify) {
-        log_with_timestamp("[" + my_ip + "] [LEADER] Replicando para o backup " + backup_info.ip_address + "...");
+        //log_with_timestamp("[" + my_ip + "] [LEADER] Replicando para o backup " + backup_info.ip_address + "...");
 
         struct sockaddr_in dest_addr = {};
         dest_addr.sin_family = AF_INET;
