@@ -689,26 +689,33 @@ void Server::runAsBackup()
                 {
                     const int ACK_BURST_COUNT = 3;
                     Message ack_msg = {Type::REPLICATION_ACK, 0, msg.seq};
-                    
+
                     struct in_addr original_client_addr;
                     original_client_addr.s_addr = msg.ip_addr;
                     string client_ip_str = inet_ntoa(original_client_addr);
-                                    
+
                     setParticipantState(client_ip_str, msg.seq, msg.num, msg.total_sum, msg.total_reqs);
+
                     {
                         lock_guard<mutex> lock_sum(sumMutex);
                         this->sumTotal.sum = msg.total_sum_server;
                         this->sumTotal.num_reqs = msg.total_reqs_server;
                     }
-                
-                    cout << "[BACKUP] ";
-                    printParticipants(client_ip_str);
 
+                    // 🔄 Impressão paralela (em thread separada)
+                    thread print_thread([this, client_ip_str]() {
+                        static mutex print_mutex;  // para evitar prints sobrepostos
+                        lock_guard<mutex> lock(print_mutex);
+                        cout << "[BACKUP] ";
+                        this->printParticipants(client_ip_str);
+                    });
+                    print_thread.join();  // espera a thread de impressão terminar
+
+                    // ✅ Envio do ACK (sem alteração)
                     for (int i = 0; i < ACK_BURST_COUNT; ++i) {
                         sendto(server_socket, &ack_msg, sizeof(ack_msg), 0, (struct sockaddr *)&from_addr, from_len);
                         this_thread::sleep_for(chrono::milliseconds(10));
-                    }
-
+                    }                  
                 }
                 break;
             case Type::ELECTION:
