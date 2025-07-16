@@ -300,7 +300,6 @@ void Server::runAsLeader()
 {
     log_with_timestamp("[" + my_ip + "] SOU O NOVO LIDER ");
     
-    synchronizeStateWithBackups();
 
     serverListMutex.lock();
     server_list.clear();
@@ -318,6 +317,7 @@ void Server::runAsLeader()
         this_thread::sleep_for(chrono::milliseconds(100));
     }
 
+    synchronizeStateWithBackups();
     
     thread server_listener_thread(&Server::listenForServerMessages, this);
     thread client_listener_thread(&Server::listenForClientMessages, this);
