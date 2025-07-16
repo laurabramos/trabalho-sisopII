@@ -58,10 +58,11 @@ private:
     // Funções de negócio e replicação
     void handleClientDiscovery(int discovery_socket, const struct sockaddr_in& fromAddr);
     bool isDuplicateRequest(const std::string& clientIP, uint32_t seq);
+    void applyReplicationState(const Message& replication_msg);
     tableClient updateParticipant(const std::string& clientIP, uint32_t seq, uint32_t num);
     void updateSumTable(uint32_t seq, uint64_t num);
     void printInicio();
-    void printParticipants(const std::string& clientIP);
+    void printParticipants(const std::string& clientIP, const std::string& role_prefix);
     void printRepet(const std::string& clientIP, uint32_t duplicate_seq);
     bool checkList(const std::string& ip);
     bool replicateToBackups(const Message& client_request, const struct sockaddr_in& client_addr, const tableClient& client_state, const tableAgregation& server_state);
