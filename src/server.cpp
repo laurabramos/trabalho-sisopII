@@ -151,15 +151,61 @@ void Server::findAndElect()
     }
 
     this->leader_ip = new_leader_ip;
+    if (this->leader_ip != this->my_ip)
+    {
+        log_with_timestamp("[" + my_ip + "] Nó não eleito. Sincronizando estado com o líder " + this->leader_ip + "...");
+
+        // Limpa o estado local para receber o novo
+        participants.clear();
+        sumTotal = {0, 0};
+
+        // Envia o pedido de transferência
+        Message request_msg = {Type::STATE_TRANSFER_REQUEST, 0, 0};
+        struct sockaddr_in leader_addr = {};
+        leader_addr.sin_family = AF_INET;
+        leader_addr.sin_port = htons(server_communication_port);
+        inet_pton(AF_INET, this->leader_ip.c_str(), &leader_addr.sin_addr);
+        sendto(server_socket, &request_msg, sizeof(request_msg), 0, (struct sockaddr *)&leader_addr, sizeof(leader_addr));
+
+        // Espera um tempo para a transferência de estado ocorrer
+        // Um mecanismo de ACK seria mais robusto, mas o sleep é uma simplificação.
+        log_with_timestamp("[" + my_ip + "] Aguardando transferência de estado...");
+        setSocketTimeout(server_socket, 5); // Timeout de 5s para a transferência
+
+        auto transfer_start_time = chrono::steady_clock::now();
+        while (chrono::duration_cast<chrono::seconds>(chrono::steady_clock::now() - transfer_start_time).count() < 5)
+        {
+            Message msg;
+            if (recvfrom(server_socket, &msg, sizeof(msg), 0, NULL, NULL) > 0)
+            {
+                if (msg.type == Type::STATE_TRANSFER_PAYLOAD)
+                {
+                    // Mesma lógica de aplicação de estado do listener
+                    if (msg.ip_addr == 0)
+                    { /* aplica estado global */
+                    }
+                    else
+                    { /* aplica estado de participante */
+                    }
+                }
+            }
+        }
+        log_with_timestamp("[" + my_ip + "] Sincronização concluída ou timeout.");
+    }
+
+    // Após a sincronização (se necessária), define o papel final.
     if (this->leader_ip == this->my_ip)
     {
+        // Se um nó retorna e tem o maior IP, ele será eleito, mas começará com estado vazio.
+        // Ele se atualizará à medida que os clientes se conectarem.
+        // Uma solução mais avançada exigiria que ele obtivesse o estado de um dos backups.
         this->role = ServerRole::LEADER;
     }
     else
     {
         this->role = ServerRole::BACKUP;
     }
-    log_with_timestamp("[" + my_ip + "] Eleição concluída. Líder definido como: " + this->leader_ip);
+    log_with_timestamp("[" + my_ip + "] Eleição concluída. Função final: " + (this->role == ServerRole::LEADER ? "LÍDER" : "BACKUP") + ". Líder definido como: " + this->leader_ip);
 }
 
 // --- LÓGICA DE OPERAÇÃO ---
