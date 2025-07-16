@@ -114,7 +114,7 @@ bool Client::sendOneRequest(uint32_t num, std::string& currentServerIP, int requ
         serverAddr.sin_port = htons(requestPort);
         inet_pton(AF_INET, currentServerIP.c_str(), &serverAddr.sin_addr);
 
-        Message message = {Type::REQ, num, this->current_seq};
+        Message message = {Type::REQ, this->current_seq, num};
         sendto(clientSocket, &message, sizeof(message), 0, (struct sockaddr*)&serverAddr, sizeof(serverAddr));
 
         Message response;
