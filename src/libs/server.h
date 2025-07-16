@@ -48,6 +48,7 @@ private:
     void sendHeartbeats();
     void listenForBackupMessages();
     void checkForLeaderFailure();
+    void listenForClientDiscovery();
     void listenForServerMessages();
     void receiveNumbers();
 
@@ -55,7 +56,7 @@ private:
     void handleServerDiscovery(const struct sockaddr_in& fromAddr);
     
     // Funções de negócio e replicação
-    void handleClientDiscovery(const struct sockaddr_in& fromAddr);
+    void handleClientDiscovery(int discovery_socket, const struct sockaddr_in& fromAddr);
     bool isDuplicateRequest(const std::string& clientIP, uint32_t seq);
     tableClient updateParticipant(const std::string& clientIP, uint32_t seq, uint32_t num);
     void updateSumTable(uint32_t seq, uint64_t num);
