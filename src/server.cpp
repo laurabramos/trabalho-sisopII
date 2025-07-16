@@ -298,40 +298,29 @@ void Server::startElection()
 
 void Server::runAsLeader()
 {
-    log_with_timestamp("[" + my_ip + "] Venci a eleição. Assumindo o papel de LÍDER.");
+    log_with_timestamp("[" + my_ip + "] SOU O NOVO LIDER ");
+    
+    serverListMutex.lock();
+    server_list.clear();
+    serverListMutex.unlock();
 
-    // PASSO 1: FINALIZAR A ELEIÇÃO ANUNCIANDO A LIDERANÇA IMEDIATAMENTE.
-    // Isto é CRÍTICO para prevenir que outros servidores também se tornem líderes ("split-brain").
-    log_with_timestamp("[" + my_ip + "] Anunciando minha liderança para a rede...");
     struct sockaddr_in broadcast_addr = {};
     broadcast_addr.sin_family = AF_INET;
     broadcast_addr.sin_port = htons(this->server_communication_port);
     broadcast_addr.sin_addr.s_addr = inet_addr(BROADCAST_ADDR);
 
     Message announcement_msg = {Type::COORDINATOR, 0, 0};
-    const int ANNOUNCEMENT_ATTEMPTS = 3;
-    for (int i = 0; i < ANNOUNCEMENT_ATTEMPTS; ++i)
+    for (int i = 0; i < 3; ++i)
     {
         sendto(this->server_socket, &announcement_msg, sizeof(announcement_msg), 0, (struct sockaddr *)&broadcast_addr, sizeof(broadcast_addr));
         this_thread::sleep_for(chrono::milliseconds(100));
     }
 
-    // PASSO 2: SINCRONIZAR O ESTADO COM OS BACKUPS.
-    // Agora que a rede está ciente de que sou o líder, posso buscar o estado mais recente de forma segura.
-    synchronizeStateFromBestBackup();
     
-    // PASSO 3: INICIAR AS THREADS DE OPERAÇÃO NORMAL.
-    log_with_timestamp("[" + my_ip + "] Sincronização concluída. Iniciando threads de operação do líder.");
-    
-    serverListMutex.lock();
-    server_list.clear();
-    serverListMutex.unlock();
-
     thread server_listener_thread(&Server::listenForServerMessages, this);
     thread client_listener_thread(&Server::listenForClientMessages, this);
     thread client_comm_thread(&Server::receiveNumbers, this);
-    // Se você usa heartbeats, descomente a linha abaixo.
-    // thread heartbeat_thread(&Server::sendHeartbeats, this);
+    //thread heartbeat_thread(&Server::sendHeartbeats, this);
 
     while (this->role == ServerRole::LEADER)
     {
@@ -341,84 +330,8 @@ void Server::runAsLeader()
     server_listener_thread.join();
     client_listener_thread.join();
     client_comm_thread.join();
-    // heartbeat_thread.join();
+    //heartbeat_thread.join();
 }
-
-
-void Server::synchronizeStateFromBestBackup() {
-     log_with_timestamp("[" + my_ip + "] [LEADER] Iniciando busca pelo backup mais atualizado...");
-
-    // Passo 1: O líder pede um resumo a todos os servidores na rede.
-    struct sockaddr_in broadcast_addr = {};
-    broadcast_addr.sin_family = AF_INET;
-    broadcast_addr.sin_port = htons(this->server_communication_port);
-    broadcast_addr.sin_addr.s_addr = inet_addr(BROADCAST_ADDR);
-
-    Message summary_request = {Type::REQUEST_STATE_SUMMARY, 0, 0};
-    sendto(this->server_socket, &summary_request, sizeof(summary_request), 0, (struct sockaddr *)&broadcast_addr, sizeof(broadcast_addr));
-
-    setSocketTimeout(this->server_socket, 2); // Espera 2s pelas respostas de resumo.
-
-    // Passo 2: O líder coleta as respostas e escolhe o backup com mais requisições.
-    string best_backup_ip = "";
-    uint32_t max_reqs = 0;
-    
-    auto start_time = chrono::steady_clock::now();
-    while (chrono::duration_cast<chrono::seconds>(chrono::steady_clock::now() - start_time).count() < 2) {
-        Message response;
-        struct sockaddr_in from_addr;
-        socklen_t from_len = sizeof(from_addr);
-        if (recvfrom(this->server_socket, &response, sizeof(response), 0, (struct sockaddr*)&from_addr, &from_len) > 0) {
-            if (response.type == Type::STATE_SUMMARY_RESPONSE) {
-                string from_ip = inet_ntoa(from_addr.sin_addr);
-                if (response.total_reqs_server >= max_reqs) { // Usa >= para pegar um backup válido mesmo se todos tiverem 0 reqs
-                    max_reqs = response.total_reqs_server;
-                    best_backup_ip = from_ip;
-                }
-            }
-        }
-    }
-
-    // Passo 3: Se encontrou um candidato, o líder pede o estado completo dele.
-    if (!best_backup_ip.empty()) {
-        log_with_timestamp("[" + my_ip + "] [LEADER] O melhor backup é " + best_backup_ip + ". Solicitando estado completo...");
-        
-        struct sockaddr_in best_backup_addr = {};
-        best_backup_addr.sin_family = AF_INET;
-        best_backup_addr.sin_port = htons(this->server_communication_port);
-        best_backup_addr.sin_addr.s_addr = inet_addr(best_backup_ip.c_str());
-
-        Message full_state_request = {Type::REQUEST_FULL_STATE, 0, 0};
-        sendto(this->server_socket, &full_state_request, sizeof(full_state_request), 0, (struct sockaddr *)&best_backup_addr, sizeof(best_backup_addr));
-
-        // Passo 4: O líder recebe os dados do backup escolhido.
-        setSocketTimeout(this->server_socket, 5); // Timeout de 5s para a transferência
-        int updates_received = 0;
-        start_time = chrono::steady_clock::now();
-        while (chrono::duration_cast<chrono::seconds>(chrono::steady_clock::now() - start_time).count() < 5) {
-            Message state_update;
-            if (recvfrom(this->server_socket, &state_update, sizeof(state_update), 0, nullptr, nullptr) > 0) {
-                 if (state_update.type == Type::STATE_SYNC_UPDATE) {
-                    struct in_addr client_addr_struct;
-                    client_addr_struct.s_addr = state_update.ip_addr;
-                    string client_ip_str = inet_ntoa(client_addr_struct);
-                    setParticipantState(client_ip_str, state_update.seq, state_update.num, state_update.total_sum, state_update.total_reqs);
-                    lock_guard<mutex> lock(sumMutex);
-                    this->sumTotal.sum = state_update.total_sum_server;
-                    this->sumTotal.num_reqs = state_update.total_reqs_server;
-                    updates_received++;
-                 }
-            } else { break; }
-        }
-        log_with_timestamp("[" + my_ip + "] [LEADER] Sincronização concluída. " + to_string(updates_received) + " registros adotados do backup " + best_backup_ip);
-
-    } else {
-        log_with_timestamp("[" + my_ip + "] [LEADER] Nenhum backup respondeu. Assumindo estado inicial vazio.");
-    }
-    
-    setSocketTimeout(this->server_socket, 0); // Restaura o socket para o modo de bloqueio padrão
-}
-
 
 void Server::listenForServerMessages()
 {
@@ -694,29 +607,42 @@ void Server::runAsBackup()
         socklen_t from_len = sizeof(from_addr);
 
         int received = recvfrom(server_socket, &msg, sizeof(msg), 0, (struct sockaddr *)&from_addr, &from_len);
-        
         if (received > 0)
         {
             string from_ip = inet_ntoa(from_addr.sin_addr);
-
-            // CORREÇÃO CRÍTICA: Se QUALQUER mensagem for recebida do líder conhecido, ele está vivo.
-            // Isso previne a detecção de falha incorreta enquanto o líder está ocupado sincronizando.
             if (from_ip == this->leader_ip)
             {
                 this->last_heartbeat_time = chrono::steady_clock::now();
             }
-
-            // Agora, o switch processa a mensagem específica.
             switch (msg.type)
             {
             case Type::HEARTBEAT:
             case Type::I_AM_ALIVE:
-                // A atualização do timer já foi feita acima. Nada a fazer aqui.
                 break;
             case Type::REPLICATION_UPDATE:
                 if (from_ip == this->leader_ip)
                 {
-                    // ... (lógica de replicação existente)
+                    const int ACK_BURST_COUNT = 3;
+                    Message ack_msg = {Type::REPLICATION_ACK, 0, msg.seq};
+
+                    for (int i = 0; i < ACK_BURST_COUNT; ++i) {
+                        sendto(server_socket, &ack_msg, sizeof(ack_msg), 0, (struct sockaddr *)&from_addr, from_len);
+                        this_thread::sleep_for(chrono::milliseconds(10));
+                    }
+
+                    struct in_addr original_client_addr;
+                    original_client_addr.s_addr = msg.ip_addr;
+                    string client_ip_str = inet_ntoa(original_client_addr);
+                                    
+                    setParticipantState(client_ip_str, msg.seq, msg.num, msg.total_sum, msg.total_reqs);
+                    {
+                        lock_guard<mutex> lock_sum(sumMutex);
+                        this->sumTotal.sum = msg.total_sum_server;
+                        this->sumTotal.num_reqs = msg.total_reqs_server;
+                    }
+                
+                    cout << "[BACKUP] ";
+                    printParticipants(client_ip_str);
                 }
                 break;
             case Type::ELECTION:
@@ -725,36 +651,6 @@ void Server::runAsBackup()
             case Type::COORDINATOR:
                 handleCoordinatorMessage(from_addr);
                 break;
-
-            // LÓGICA REATIVA PARA RESPONDER AOS PEDIDOS DO LÍDER DURANTE A SINCRONIZAÇÃO
-            case Type::REQUEST_STATE_SUMMARY:
-            {
-                Message summary_response = {Type::STATE_SUMMARY_RESPONSE, 0, 0};
-                lock_guard<mutex> lock(sumMutex);
-                summary_response.total_reqs_server = this->sumTotal.num_reqs;
-                sendto(server_socket, &summary_response, sizeof(summary_response), 0, (struct sockaddr *)&from_addr, from_len);
-                break;
-            }
-            case Type::REQUEST_FULL_STATE:
-            {
-                log_with_timestamp("[" + my_ip + "] [BACKUP] Atendendo pedido do novo líder para enviar estado completo.");
-                lock_guard<mutex> lock_participants(participantsMutex);
-                lock_guard<mutex> lock_sum(sumMutex);
-
-                for (const auto& p : participants) {
-                    Message state_update_msg = {Type::STATE_SYNC_UPDATE};
-                    state_update_msg.ip_addr = inet_addr(p.address.c_str());
-                    state_update_msg.seq = p.last_req;
-                    state_update_msg.num = p.last_value;
-                    state_update_msg.total_sum = p.last_sum;
-                    state_update_msg.total_reqs = p.last_req;
-                    state_update_msg.total_sum_server = this->sumTotal.sum;
-                    state_update_msg.total_reqs_server = this->sumTotal.num_reqs;
-                    sendto(server_socket, &state_update_msg, sizeof(state_update_msg), 0, (struct sockaddr *)&from_addr, from_len);
-                    this_thread::sleep_for(chrono::milliseconds(5));
-                }
-                break;
-            }
             default:
                 break;
             }
