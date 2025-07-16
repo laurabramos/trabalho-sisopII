@@ -186,6 +186,15 @@ void Server::runAsBackup()
 {
     log_with_timestamp("--- MODO BACKUP ATIVADO. Líder: " + this->leader_ip + " ---");
 
+    log_with_timestamp("[" + my_ip + "] [BACKUP] Solicitando estado completo do líder " + this->leader_ip);
+    Message request_msg = {Type::STATE_TRANSFER_REQUEST, 0, 0};
+    struct sockaddr_in leader_addr = {};
+    leader_addr.sin_family = AF_INET;
+    leader_addr.sin_port = htons(server_communication_port); // Envia para a porta de comunicação
+    inet_pton(AF_INET, this->leader_ip.c_str(), &leader_addr.sin_addr);
+    // Usando o server_socket, que já está aberto
+    sendto(server_socket, &request_msg, sizeof(request_msg), 0, (struct sockaddr *)&leader_addr, sizeof(leader_addr));
+
     // Inicializa o timestamp para a verificação de falha
     last_heartbeat_time = chrono::steady_clock::now();
 
@@ -204,6 +213,37 @@ void Server::runAsBackup()
 }
 
 // --- THREADS E HANDLERS ---
+
+void Server::handleStateTransferRequest(const struct sockaddr_in &fromAddr)
+{
+    string requester_ip = inet_ntoa(fromAddr.sin_addr);
+    log_with_timestamp("[" + my_ip + "] [LEADER] Recebido pedido de transferência de estado de " + requester_ip);
+
+    // Bloqueia os mutexes para garantir uma leitura consistente do estado
+    lock_guard<mutex> lock_p(participantsMutex);
+    lock_guard<mutex> lock_s(sumMutex);
+
+    // Envia o estado global primeiro
+    Message global_state_msg = {};
+    global_state_msg.type = Type::STATE_TRANSFER_PAYLOAD;
+    global_state_msg.total_sum_server = sumTotal.sum;
+    global_state_msg.total_reqs_server = sumTotal.num_reqs;
+    sendto(server_socket, &global_state_msg, sizeof(global_state_msg), 0, (struct sockaddr *)&fromAddr, sizeof(fromAddr));
+
+    // Envia o estado de cada participante, um por um
+    for (const auto &p : participants)
+    {
+        Message participant_msg = {};
+        participant_msg.type = Type::STATE_TRANSFER_PAYLOAD;
+        inet_pton(AF_INET, p.address.c_str(), &participant_msg.ip_addr);
+        participant_msg.seq = p.last_req;
+        participant_msg.num = p.last_value;
+        participant_msg.total_sum = p.last_sum;
+        sendto(server_socket, &participant_msg, sizeof(participant_msg), 0, (struct sockaddr *)&fromAddr, sizeof(fromAddr));
+        this_thread::sleep_for(chrono::milliseconds(10)); // Pequeno delay para não sobrecarregar
+    }
+    log_with_timestamp("[" + my_ip + "] [LEADER] Transferência de estado para " + requester_ip + " concluída.");
+}
 
 void Server::checkForLeaderFailure()
 {
@@ -263,6 +303,10 @@ void Server::listenForServerMessages()
             {
                 handleServerDiscovery(from_addr);
             }
+            else if (msg.type == Type::STATE_TRANSFER_REQUEST)
+            {
+                handleStateTransferRequest(from_addr);
+            }
         }
     }
 }
@@ -319,10 +363,26 @@ void Server::listenForBackupMessages()
                 Message ack_msg = {Type::REPLICATION_ACK, msg.seq, 0};
                 sendto(server_socket, &ack_msg, sizeof(ack_msg), 0, (struct sockaddr *)&from_addr, from_len);
             }
+            else if (msg.type == Type::STATE_TRANSFER_PAYLOAD && from_ip == this->leader_ip)
+            {
+                // Se ip_addr for 0, é a mensagem de estado global
+                if (msg.ip_addr == 0)
+                {
+                    lock_guard<mutex> lock(sumMutex);
+                    sumTotal.sum = msg.total_sum_server;
+                    sumTotal.num_reqs = msg.total_reqs_server;
+                    log_with_timestamp("[" + my_ip + "] [BACKUP] Estado global sincronizado: " + to_string(sumTotal.sum));
+                }
+                else
+                { // Senão, é o estado de um participante
+                    struct in_addr client_addr = {.s_addr = msg.ip_addr};
+                    setParticipantState(inet_ntoa(client_addr), msg.seq, msg.num, msg.total_sum, msg.seq);
+                    log_with_timestamp("[" + my_ip + "] [BACKUP] Estado do participante " + string(inet_ntoa(client_addr)) + " sincronizado.");
+                }
+            }
         }
     }
 }
-
 
 void Server::listenForClientDiscovery()
 {
@@ -401,8 +461,8 @@ void Server::receiveNumbers()
                     tableClient clientState = updateParticipant(clientIP, number.seq, number.num);
                     updateSumTable(number.seq, number.num);
                     printParticipants(clientIP, "[LEADER] ");
-                    
-                    tableAgregation server_state_copy;
+
+                    tableAgregation server_state_copuy;
                     {
                         lock_guard<mutex> lock(sumMutex);
                         server_state_copy = this->sumTotal;
@@ -517,6 +577,12 @@ bool Server::replicateToBackups(const Message &client_request, const struct sock
     int successful_acks = 0;
     for (const auto &backup_info : backups_to_notify)
     {
+
+        if (backup_info.ip_address == my_ip)
+        {
+            continue; // Não replica para si mesmo.
+        }
+
         struct sockaddr_in dest_addr = {};
         dest_addr.sin_family = AF_INET;
         dest_addr.sin_port = htons(this->server_communication_port);
@@ -554,9 +620,10 @@ bool Server::replicateToBackups(const Message &client_request, const struct sock
     return true;
 }
 
-void Server::applyReplicationState(const Message& msg) {
+void Server::applyReplicationState(const Message &msg)
+{
     // Extrai o IP do cliente original da mensagem de replicação
-    struct in_addr client_addr_struct = { .s_addr = msg.ip_addr };
+    struct in_addr client_addr_struct = {.s_addr = msg.ip_addr};
     string clientIP = inet_ntoa(client_addr_struct);
 
     // Atualiza as tabelas de estado do backup
@@ -566,7 +633,6 @@ void Server::applyReplicationState(const Message& msg) {
     // Imprime o log com o prefixo [BACKUP]
     printParticipants(clientIP, "[BACKUP]");
 }
-
 
 void Server::setParticipantState(const std::string &clientIP, uint32_t seq, uint32_t value, uint64_t client_sum, uint32_t client_reqs)
 {
