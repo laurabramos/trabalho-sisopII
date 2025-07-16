@@ -525,7 +525,7 @@ bool Server::replicateToBackups(const Message& client_request, const struct sock
         backups_to_notify = this->server_list;
     }
 
-    log_with_timestamp("[" + my_ip + "] [LEADER] Iniciando replicação síncrona, um por um, para " + to_string(backups_to_notify.size()) + " backup(s)...");
+    //log_with_timestamp("[" + my_ip + "] [LEADER] Iniciando replicação síncrona, um por um, para " + to_string(backups_to_notify.size()) + " backup(s)...");
     Message replication_msg = client_request;
     replication_msg.type = Type::REPLICATION_UPDATE;
     replication_msg.ip_addr = client_addr.sin_addr.s_addr;
@@ -576,7 +576,7 @@ bool Server::replicateToBackups(const Message& client_request, const struct sock
     } 
     setSocketTimeout(this->server_socket, 0);
 
-    log_with_timestamp("[" + my_ip + "] [LEADER] Replicação concluída. Sucesso para " + to_string(successful_acks) + "/" + to_string(backups_to_notify.size()) + " backups.");
+    //log_with_timestamp("[" + my_ip + "] [LEADER] Replicação concluída. Sucesso para " + to_string(successful_acks) + "/" + to_string(backups_to_notify.size()) + " backups.");
 
     return true; 
 }
@@ -598,7 +598,7 @@ void Server::setParticipantState(const std::string& clientIP, uint32_t seq, uint
 void Server::runAsBackup()
 {
     thread failure_detection_thread(&Server::checkForLeaderFailure, this);
-    log_with_timestamp("[" + my_ip + "] Papel de BACKUP assumido. Aguardando mensagens do líder (" + this->leader_ip + ").");
+    log_with_timestamp("[" + my_ip + "] Papel de BACKUP assumido.).");
 
     while (this->role == ServerRole::BACKUP)
     {
