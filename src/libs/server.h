@@ -43,9 +43,9 @@ private:
     void findAndElect();
     void runAsLeader();
     void runAsBackup();
+    void requestStateFrom(const std::string& target_ip);
 
     // Threads e Handlers
-    void applyStatePayload(const Message& msg);
     void sendHeartbeats();
     void listenForBackupMessages();
     void checkForLeaderFailure();
@@ -55,10 +55,11 @@ private:
 
     // Handlers de mensagens específicas
     void handleServerDiscovery(const struct sockaddr_in& fromAddr);
-    
-    // Funções de negócio e replicação
     void handleStateTransferRequest(const struct sockaddr_in& fromAddr);    
     void handleClientDiscovery(int discovery_socket, const struct sockaddr_in& fromAddr);
+    
+    // Funções de negócio e replicação
+    void applyStatePayload(const Message& msg);
     bool isDuplicateRequest(const std::string& clientIP, uint32_t seq);
     void applyReplicationState(const Message& replication_msg);
     tableClient updateParticipant(const std::string& clientIP, uint32_t seq, uint32_t num);
