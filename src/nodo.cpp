@@ -6,6 +6,8 @@
 #include <unistd.h>
 #include <iostream>
 #include <cstdint>
+#include <sys/ioctl.h>
+#include <net/if.h>
 
 using namespace std;
 
@@ -24,27 +26,26 @@ string Nodo::getHostname() {
     return string(hostname);
 }
 
-string Nodo::getIP() {
-    string hostname = getHostname();
+std::string Nodo::getIP() {
+    int fd = socket(AF_INET, SOCK_DGRAM, 0);
+    if (fd == -1) {
+        perror("socket");
+        return "Erro ao criar socket";
+    }
 
-    struct addrinfo hints{}, *info, *p;
-    hints.ai_family = AF_INET; 
-    hints.ai_socktype = SOCK_STREAM;
+    struct ifreq ifr{};
+    std::strncpy(ifr.ifr_name, "eth0", IFNAMSIZ - 1);
 
-    if (getaddrinfo(hostname.c_str(), nullptr, &hints, &info) != 0) {
-        perror("getaddrinfo");
+    if (ioctl(fd, SIOCGIFADDR, &ifr) == -1) {
+        perror("ioctl");
+        close(fd);
         return "Erro ao obter IP";
     }
 
-    string ipAddress = "Desconhecido";
-    for (p = info; p != nullptr; p = p->ai_next) {
-        struct sockaddr_in *addr = (struct sockaddr_in *)p->ai_addr;
-        ipAddress = inet_ntoa(addr->sin_addr);
-        break; 
-    }
+    close(fd);
 
-    freeaddrinfo(info);
-    return ipAddress;
+    struct sockaddr_in* ipaddr = (struct sockaddr_in*)&ifr.ifr_addr;
+    return std::string(inet_ntoa(ipaddr->sin_addr));
 }
 
 
