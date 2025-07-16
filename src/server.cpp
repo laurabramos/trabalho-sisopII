@@ -462,7 +462,7 @@ void Server::receiveNumbers()
                     updateSumTable(number.seq, number.num);
                     printParticipants(clientIP, "[LEADER] ");
 
-                    tableAgregation server_state_copuy;
+                    tableAgregation server_state_copy;
                     {
                         lock_guard<mutex> lock(sumMutex);
                         server_state_copy = this->sumTotal;
