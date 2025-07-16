@@ -19,7 +19,8 @@ mutex participantsMutex;
 mutex sumMutex;
 mutex serverListMutex;
 
-void log_with_timestamp(const string &message) {
+void log_with_timestamp(const string &message)
+{
     time_t now = time(0);
     char timestamp[100];
     strftime(timestamp, sizeof(timestamp), "%Y-%m-%d %H:%M:%S", localtime(&now));
@@ -27,13 +28,15 @@ void log_with_timestamp(const string &message) {
 }
 
 // Função de utilidade para converter IP. Colocada fora da classe.
-uint32_t ipToInt(const std::string &ipStr) {
+uint32_t ipToInt(const std::string &ipStr)
+{
     struct in_addr ip_addr;
     inet_aton(ipStr.c_str(), &ip_addr);
     return ntohl(ip_addr.s_addr);
 }
 
-Server::Server(int client_port, int req_port, int server_comm_port) {
+Server::Server(int client_port, int req_port, int server_comm_port)
+{
     this->client_discovery_port = client_port;
     this->client_request_port = req_port;
     this->server_communication_port = server_comm_port;
@@ -43,51 +46,62 @@ Server::Server(int client_port, int req_port, int server_comm_port) {
     this->role = ServerRole::NEEDS_ELECTION;
 }
 
-Server::~Server() {
-    if (server_socket != -1) close(server_socket);
-    if (client_socket != -1) close(client_socket);
+Server::~Server()
+{
+    if (server_socket != -1)
+        close(server_socket);
+    if (client_socket != -1)
+        close(client_socket);
 }
 
 // --- ARQUITETURA PRINCIPAL ---
 
-void Server::start() {
+void Server::start()
+{
 
     thread client_comm_thread(&Server::receiveNumbers, this);
 
     thread client_discovery_thread(&Server::listenForClientDiscovery, this);
 
+    while (true)
+    {
+        findAndElect();
 
-    while (true) {
-        findAndElect(); 
-        
-        while (role == ServerRole::LEADER || role == ServerRole::BACKUP) {
-            if (role == ServerRole::LEADER) {
+        while (role == ServerRole::LEADER || role == ServerRole::BACKUP)
+        {
+            if (role == ServerRole::LEADER)
+            {
                 runAsLeader();
-            } else { 
+            }
+            else
+            {
                 runAsBackup();
             }
         }
-        
+
         log_with_timestamp("[" + my_ip + "] Evento de re-eleição despoletado. Reiniciando processo...");
-        if (server_socket != -1) {
+        if (server_socket != -1)
+        {
             close(server_socket);
             server_socket = -1;
         }
         this_thread::sleep_for(chrono::seconds(2));
     }
-    
+
     client_comm_thread.join();
     client_discovery_thread.join();
 }
 
-void Server::findAndElect() {
+void Server::findAndElect()
+{
     log_with_timestamp("[" + my_ip + "] --- INICIANDO FASE DE DESCOBERTA E ELEIÇÃO ---");
-    
+
     leader_ip = "";
     server_list.clear();
 
     server_socket = createSocket(server_communication_port);
-    if (server_socket == -1) exit(1);
+    if (server_socket == -1)
+        exit(1);
     setSocketBroadcastOptions(server_socket);
 
     log_with_timestamp("[" + my_ip + "] Anunciando e descobrindo outros servidores...");
@@ -96,68 +110,80 @@ void Server::findAndElect() {
     broadcast_addr.sin_family = AF_INET;
     broadcast_addr.sin_port = htons(server_communication_port);
     inet_pton(AF_INET, BROADCAST_ADDR, &broadcast_addr.sin_addr);
-    
-    for(int i=0; i<2; ++i) {
+
+    for (int i = 0; i < 2; ++i)
+    {
         sendto(server_socket, &discovery_msg, sizeof(discovery_msg), 0, (struct sockaddr *)&broadcast_addr, sizeof(broadcast_addr));
         this_thread::sleep_for(chrono::milliseconds(250));
     }
 
     setSocketTimeout(server_socket, 3);
     auto listen_start_time = chrono::steady_clock::now();
-    while (chrono::duration_cast<chrono::seconds>(chrono::steady_clock::now() - listen_start_time).count() < 3) {
+    while (chrono::duration_cast<chrono::seconds>(chrono::steady_clock::now() - listen_start_time).count() < 3)
+    {
         Message response;
         struct sockaddr_in from_addr;
         socklen_t from_len = sizeof(from_addr);
-        if (recvfrom(server_socket, &response, sizeof(response), 0, (struct sockaddr *)&from_addr, &from_len) > 0) {
+        if (recvfrom(server_socket, &response, sizeof(response), 0, (struct sockaddr *)&from_addr, &from_len) > 0)
+        {
             string from_ip = inet_ntoa(from_addr.sin_addr);
-            if (from_ip == my_ip) continue;
-            
+            if (from_ip == my_ip)
+                continue;
+
             lock_guard<mutex> lock(serverListMutex);
-            if (!checkList(from_ip)) {
-                 server_list.push_back({from_ip});
-                 log_with_timestamp("[" + my_ip + "] Servidor " + from_ip + " detectado.");
+            if (!checkList(from_ip))
+            {
+                server_list.push_back({from_ip});
+                log_with_timestamp("[" + my_ip + "] Servidor " + from_ip + " detectado.");
             }
         }
     }
-    
+
     server_list.push_back({my_ip});
 
     string new_leader_ip = my_ip;
-    for (const auto& server : server_list) {
-        if (ipToInt(server.ip_address) > ipToInt(new_leader_ip)) {
+    for (const auto &server : server_list)
+    {
+        if (ipToInt(server.ip_address) > ipToInt(new_leader_ip))
+        {
             new_leader_ip = server.ip_address;
         }
     }
-    
+
     this->leader_ip = new_leader_ip;
-    if (this->leader_ip == this->my_ip) {
+    if (this->leader_ip == this->my_ip)
+    {
         this->role = ServerRole::LEADER;
-    } else {
+    }
+    else
+    {
         this->role = ServerRole::BACKUP;
     }
     log_with_timestamp("[" + my_ip + "] Eleição concluída. Líder definido como: " + this->leader_ip);
 }
 
-
 // --- LÓGICA DE OPERAÇÃO ---
 
-void Server::runAsLeader() {
+void Server::runAsLeader()
+{
     log_with_timestamp("--- MODO LÍDER ATIVADO ---");
     this->leader_ip = my_ip; // Garante que sei que sou o líder
 
     thread heartbeat_thread(&Server::sendHeartbeats, this);
     thread server_listener_thread(&Server::listenForServerMessages, this);
-    
-    while (role == ServerRole::LEADER) {
+
+    while (role == ServerRole::LEADER)
+    {
         this_thread::sleep_for(chrono::seconds(1));
     }
-    
+
     log_with_timestamp("Deixando o papel de líder...");
     heartbeat_thread.join();
     server_listener_thread.join();
 }
 
-void Server::runAsBackup() {
+void Server::runAsBackup()
+{
     log_with_timestamp("--- MODO BACKUP ATIVADO. Líder: " + this->leader_ip + " ---");
 
     // Inicializa o timestamp para a verificação de falha
@@ -168,7 +194,8 @@ void Server::runAsBackup() {
     thread backup_listener_thread(&Server::listenForBackupMessages, this);
     // ==============================================================
 
-    while (role == ServerRole::BACKUP) {
+    while (role == ServerRole::BACKUP)
+    {
         this_thread::sleep_for(chrono::seconds(1));
     }
 
@@ -176,66 +203,78 @@ void Server::runAsBackup() {
     backup_listener_thread.join(); // Garante que a thread termine
 }
 
-
 // --- THREADS E HANDLERS ---
 
-void Server::checkForLeaderFailure() {
+void Server::checkForLeaderFailure()
+{
     last_heartbeat_time = chrono::steady_clock::now();
     const int HEARTBEAT_TIMEOUT_SEC = 6;
 
-    while (role == ServerRole::BACKUP) {
+    while (role == ServerRole::BACKUP)
+    {
         this_thread::sleep_for(chrono::seconds(1));
-        
-        if (leader_ip.empty() || leader_ip == my_ip) {
+
+        if (leader_ip.empty() || leader_ip == my_ip)
+        {
             continue;
         }
 
-        if (chrono::duration_cast<chrono::seconds>(chrono::steady_clock::now() - last_heartbeat_time).count() > HEARTBEAT_TIMEOUT_SEC) {
+        if (chrono::duration_cast<chrono::seconds>(chrono::steady_clock::now() - last_heartbeat_time).count() > HEARTBEAT_TIMEOUT_SEC)
+        {
             log_with_timestamp("[" + my_ip + "] Líder (" + leader_ip + ") inativo. Reiniciando para forçar nova eleição.");
             role = ServerRole::NEEDS_ELECTION;
-            return; 
+            return;
         }
     }
 }
 
-void Server::sendHeartbeats() {
+void Server::sendHeartbeats()
+{
     struct sockaddr_in broadcast_addr = {};
     broadcast_addr.sin_family = AF_INET;
     broadcast_addr.sin_port = htons(server_communication_port);
     inet_pton(AF_INET, BROADCAST_ADDR, &broadcast_addr.sin_addr);
-    
+
     Message hb_msg = {Type::HEARTBEAT};
 
-    while (role == ServerRole::LEADER) {
+    while (role == ServerRole::LEADER)
+    {
         sendto(server_socket, &hb_msg, sizeof(hb_msg), 0, (struct sockaddr *)&broadcast_addr, sizeof(broadcast_addr));
         this_thread::sleep_for(chrono::seconds(2));
     }
 }
 
-void Server::listenForServerMessages() {
-    while (role == ServerRole::LEADER) {
+void Server::listenForServerMessages()
+{
+    while (role == ServerRole::LEADER)
+    {
         setSocketTimeout(server_socket, 1);
         Message msg;
         struct sockaddr_in from_addr;
         socklen_t from_len = sizeof(from_addr);
 
-        if (recvfrom(server_socket, &msg, sizeof(msg), 0, (struct sockaddr *)&from_addr, &from_len) > 0) {
+        if (recvfrom(server_socket, &msg, sizeof(msg), 0, (struct sockaddr *)&from_addr, &from_len) > 0)
+        {
             string from_ip = inet_ntoa(from_addr.sin_addr);
-            if (from_ip == my_ip) continue;
+            if (from_ip == my_ip)
+                continue;
 
-            if (msg.type == Type::SERVER_DISCOVERY) {
+            if (msg.type == Type::SERVER_DISCOVERY)
+            {
                 handleServerDiscovery(from_addr);
             }
         }
     }
 }
 
-void Server::handleServerDiscovery(const struct sockaddr_in &fromAddr) {
+void Server::handleServerDiscovery(const struct sockaddr_in &fromAddr)
+{
     string new_server_ip = inet_ntoa(fromAddr.sin_addr);
-    
+
     // Adiciona o novo servidor à lista, se ainda não estiver lá.
     lock_guard<mutex> lock(serverListMutex);
-    if (!checkList(new_server_ip)) {
+    if (!checkList(new_server_ip))
+    {
         server_list.push_back({new_server_ip});
         log_with_timestamp("[" + my_ip + "] Novo servidor " + new_server_ip + " adicionado à lista.");
     }
@@ -243,25 +282,30 @@ void Server::handleServerDiscovery(const struct sockaddr_in &fromAddr) {
     // =================== LÓGICA CRÍTICA ADICIONADA ===================
     // Se eu sou o líder e o novo servidor tem um IP maior, eu devo
     // ceder a liderança e forçar uma nova eleição.
-    if (this->role == ServerRole::LEADER && ipToInt(new_server_ip) > ipToInt(my_ip)) {
+    if (this->role == ServerRole::LEADER && ipToInt(new_server_ip) > ipToInt(my_ip))
+    {
         log_with_timestamp("[" + my_ip + "] Detectado servidor com IP maior (" + new_server_ip + "). Cedendo liderança.");
-        this->role = ServerRole::NEEDS_ELECTION; 
+        this->role = ServerRole::NEEDS_ELECTION;
     }
     // ================================================================
 }
 
-void Server::listenForBackupMessages() {
-    while (role == ServerRole::BACKUP) {
+void Server::listenForBackupMessages()
+{
+    while (role == ServerRole::BACKUP)
+    {
         setSocketTimeout(server_socket, 1); // Timeout curto para não bloquear o loop
         Message msg;
         struct sockaddr_in from_addr;
         socklen_t from_len = sizeof(from_addr);
 
-        if (recvfrom(server_socket, &msg, sizeof(msg), 0, (struct sockaddr *)&from_addr, &from_len) > 0) {
+        if (recvfrom(server_socket, &msg, sizeof(msg), 0, (struct sockaddr *)&from_addr, &from_len) > 0)
+        {
             string from_ip = inet_ntoa(from_addr.sin_addr);
 
             // Se a mensagem é um HEARTBEAT e vem do líder que eu conheço
-            if (msg.type == Type::HEARTBEAT && from_ip == this->leader_ip) {
+            if (msg.type == Type::HEARTBEAT && from_ip == this->leader_ip)
+            {
                 // Atualiza o timestamp do último heartbeat recebido
                 last_heartbeat_time = chrono::steady_clock::now();
             }
@@ -269,26 +313,30 @@ void Server::listenForBackupMessages() {
     }
 }
 
-
-void Server::listenForClientDiscovery() {
+void Server::listenForClientDiscovery()
+{
     // Esta thread cria e gerencia seu próprio socket na porta de descoberta.
     int discovery_socket = createSocket(this->client_discovery_port);
-    if (discovery_socket == -1) {
+    if (discovery_socket == -1)
+    {
         log_with_timestamp("[" + my_ip + "] ERRO CRÍTICO: Falha ao criar socket de descoberta de cliente.");
         return;
     }
 
-    while (true) {
+    while (true)
+    {
         Message msg;
         struct sockaddr_in clientAddr;
         socklen_t clientLen = sizeof(clientAddr);
-        
-        // Espera por uma mensagem de descoberta
-        int received = recvfrom(discovery_socket, &msg, sizeof(Message), 0, (struct sockaddr*)&clientAddr, &clientLen);
 
-        if (received > 0 && msg.type == Type::DESC) {
+        // Espera por uma mensagem de descoberta
+        int received = recvfrom(discovery_socket, &msg, sizeof(Message), 0, (struct sockaddr *)&clientAddr, &clientLen);
+
+        if (received > 0 && msg.type == Type::DESC)
+        {
             // Apenas o líder deve responder.
-            if (this->role == ServerRole::LEADER) {
+            if (this->role == ServerRole::LEADER)
+            {
                 log_with_timestamp("[" + my_ip + "] [LEADER] Recebido pedido de descoberta de " + string(inet_ntoa(clientAddr.sin_addr)));
                 // Chama a função de resposta, passando o socket correto.
                 handleClientDiscovery(discovery_socket, clientAddr);
@@ -298,25 +346,49 @@ void Server::listenForClientDiscovery() {
     close(discovery_socket);
 }
 
-
-
-void Server::receiveNumbers() {
+void Server::receiveNumbers()
+{
     int numSocket = createSocket(client_request_port);
-    if (numSocket == -1) { return; }
+    if (numSocket == -1)
+    {
+        return;
+    }
 
-    while (true) { 
+    while (true)
+    {
         Message number;
         struct sockaddr_in clientAddr;
         socklen_t clientLen = sizeof(clientAddr);
-        
-        int received = recvfrom(numSocket, &number, sizeof(Message), 0, (struct sockaddr*)&clientAddr, &clientLen);
-    
-        if (received > 0 && number.type == Type::REQ) {
-            if (role == ServerRole::LEADER) {
+
+        int received = recvfrom(numSocket, &number, sizeof(Message), 0, (struct sockaddr *)&clientAddr, &clientLen);
+
+        if (received > 0 && number.type == Type::REQ)
+        {
+            if (role == ServerRole::LEADER)
+            {
                 string clientIP = inet_ntoa(clientAddr.sin_addr);
-                if (isDuplicateRequest(clientIP, number.seq)) {
+                if (isDuplicateRequest(clientIP, number.seq))
+                {
                     printRepet(clientIP, number.seq);
-                } else {
+
+                    Message confirmation = {};
+                    confirmation.type = Type::REQ_ACK;
+                    confirmation.seq = number.seq;
+
+                    lock_guard<mutex> lock(participantsMutex);
+                    for (const auto &participant : participants)
+                    {
+                        if (participant.address == clientIP)
+                        {
+                            confirmation.total_sum = participant.last_sum;
+                            confirmation.total_reqs = participant.last_req;
+                            break;
+                        }
+                    }
+                    sendto(numSocket, &confirmation, sizeof(confirmation), 0, (struct sockaddr *)&clientAddr, clientLen);
+                }
+                else
+                {
                     tableClient clientState = updateParticipant(clientIP, number.seq, number.num);
                     updateSumTable(number.seq, number.num);
                     printParticipants(clientIP);
@@ -327,7 +399,7 @@ void Server::receiveNumbers() {
                         server_state_copy = this->sumTotal;
                     }
                     // replicateToBackups(number, clientAddr, clientState, server_state_copy);
-                    
+
                     Message confirmation = {};
                     confirmation.type = Type::REQ_ACK;
                     confirmation.seq = number.seq;
@@ -335,9 +407,12 @@ void Server::receiveNumbers() {
                     confirmation.total_reqs = clientState.last_req;
                     sendto(numSocket, &confirmation, sizeof(confirmation), 0, (struct sockaddr *)&clientAddr, clientLen);
                 }
-            } else { 
+            }
+            else
+            {
                 Message redirect_msg = {Type::NOT_LEADER};
-                if (!leader_ip.empty()) {
+                if (!leader_ip.empty())
+                {
                     inet_pton(AF_INET, leader_ip.c_str(), &redirect_msg.ip_addr);
                 }
                 sendto(numSocket, &redirect_msg, sizeof(redirect_msg), 0, (struct sockaddr *)&clientAddr, clientLen);
@@ -349,18 +424,20 @@ void Server::receiveNumbers() {
 
 void Server::printInicio() { log_with_timestamp("num_reqs 0 total_sum 0"); }
 
-void Server::handleClientDiscovery(int discovery_socket, const struct sockaddr_in &fromAddr) {
+void Server::handleClientDiscovery(int discovery_socket, const struct sockaddr_in &fromAddr)
+{
     string clientIP = inet_ntoa(fromAddr.sin_addr);
 
     Message response = {Type::DESC_ACK, 0, 0};
-    
+
     // Use o socket passado como parâmetro, não this->client_socket
     sendto(discovery_socket, &response, sizeof(Message), 0, (struct sockaddr *)&fromAddr, sizeof(fromAddr));
 
     lock_guard<mutex> lock(participantsMutex);
     // A lógica de adicionar participante é opcional na descoberta, mas mantida.
     // O participante será de fato criado ao receber a primeira requisição REQ.
-    if (!checkList(clientIP)) {
+    if (!checkList(clientIP))
+    {
         participants.push_back({clientIP, 0, 0, 0});
     }
 }
