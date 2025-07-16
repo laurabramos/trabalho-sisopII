@@ -442,6 +442,24 @@ void Server::receiveNumbers()
     close(numSocket);
 }
 
+void Server::applyReplicationState(const Message &msg)
+{
+    if (msg.ip_addr == 0)
+    { // Estado global
+        lock_guard<mutex> lock(sumMutex);
+        sumTotal.sum = msg.total_sum_server;
+        sumTotal.num_reqs = msg.total_reqs_server;
+        log_with_timestamp("[" + my_ip + "] [SYNC] Estado global atualizado: " + to_string(sumTotal.sum));
+    }
+    else
+    { // Estado de participante
+        struct in_addr client_addr_struct = {.s_addr = msg.ip_addr};
+        string clientIP = inet_ntoa(client_addr_struct);
+        setParticipantState(clientIP, msg.seq, msg.num, msg.total_sum, msg.total_reqs);
+        log_with_timestamp("[" + my_ip + "] [SYNC] Estado do participante " + clientIP + " atualizado.");
+    }
+}
+
 void Server::applyStatePayload(const Message &msg)
 {
     if (msg.ip_addr == 0)
