@@ -23,8 +23,9 @@ enum class Type : uint8_t {
     REPLICATION_UPDATE,
     REPLICATION_ACK,
     HEARTBEAT,
-    // Mensagens como COORDINATOR, ELECTION, OK_ANSWER não são mais necessárias
-    // na arquitetura simplificada, mas podem ser mantidas se desejar.
+    
+    STATE_TRANSFER_REQUEST,
+    STATE_TRANSFER_PAYLOAD
 };
 
 #pragma pack(push, 1)
