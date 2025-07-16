@@ -56,7 +56,7 @@ class Server : public Nodo {
         void handleServerDiscovery(const struct sockaddr_in& fromAddr);
         void receiveNumbers();
         bool replicateToBackups(const Message& client_request, const struct sockaddr_in& client_addr, const tableClient& client_state, const tableAgregation& server_state);
-
+        void handleIncomingMessages(int numSocket);
       
         void printInicio();
         bool isDuplicateRequest(const string &clientIP, uint32_t seq);
